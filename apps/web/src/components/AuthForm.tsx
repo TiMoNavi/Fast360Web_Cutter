@@ -33,17 +33,17 @@ export function AuthForm() {
   }
 
   return (
-    <form className="stack" onSubmit={onSubmit}>
-      <div className="button-row">
+    <form className="auth-card" onSubmit={onSubmit}>
+      <div className="segmented-control">
         <button
-          className={mode === "login" ? "button primary" : "button"}
+          className={mode === "login" ? "active" : ""}
           onClick={() => setMode("login")}
           type="button"
         >
           登录
         </button>
         <button
-          className={mode === "register" ? "button primary" : "button"}
+          className={mode === "register" ? "active" : ""}
           onClick={() => setMode("register")}
           type="button"
         >

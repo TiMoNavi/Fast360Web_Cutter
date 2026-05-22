@@ -1,5 +1,5 @@
-import { HelloWebXR } from "@/components/HelloWebXR";
+import { MetaWebXrPlayer } from "@/components/xr/MetaWebXrPlayer";
 
 export default function XrHelloPage() {
-  return <HelloWebXR />;
+  return <MetaWebXrPlayer />;
 }

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 
-from .models import ClipEditConfig, ViewPathPatch, ViewPathPoint
+from .models import ClipEditConfig, EffectEvent, EffectEventsPatch, ViewPathPatch, ViewPathPoint
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -135,6 +135,8 @@ def init_storage() -> None:
                 cut INTEGER NOT NULL DEFAULT 0,
                 locked INTEGER NOT NULL DEFAULT 0,
                 smooth_follow INTEGER NOT NULL DEFAULT 1,
+                interpolation TEXT NOT NULL DEFAULT 'linear',
+                transition_ms INTEGER NOT NULL DEFAULT 0,
                 input TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES cut_sessions(id) ON DELETE CASCADE
@@ -142,6 +144,37 @@ def init_storage() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_view_path_points_session_time
                 ON view_path_points(session_id, t_ms);
+
+            CREATE TABLE IF NOT EXISTS effect_event_patches (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                effect_revision INTEGER NOT NULL,
+                replace_start_ms INTEGER NOT NULL,
+                replace_end_ms INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                patch_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES cut_sessions(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS effect_events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                effect_revision INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                event_name TEXT NOT NULL,
+                start_ms INTEGER NOT NULL,
+                end_ms INTEGER NOT NULL,
+                params_json TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES cut_sessions(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_effect_events_session_range
+                ON effect_events(session_id, start_ms, end_ms);
 
             CREATE TABLE IF NOT EXISTS minute_segments (
                 id TEXT PRIMARY KEY,
@@ -172,6 +205,8 @@ def init_storage() -> None:
         ensure_column(conn, "cut_sessions", "user_id", "TEXT NOT NULL DEFAULT 'user_legacy_demo'")
         ensure_column(conn, "exports", "user_id", "TEXT NOT NULL DEFAULT 'user_legacy_demo'")
         ensure_column(conn, "exports", "error_message", "TEXT")
+        ensure_column(conn, "view_path_points", "interpolation", "TEXT NOT NULL DEFAULT 'linear'")
+        ensure_column(conn, "view_path_points", "transition_ms", "INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             INSERT OR IGNORE INTO users (id, email, password_hash, password_salt, created_at)
@@ -345,13 +380,110 @@ def save_patch(conn: sqlite3.Connection, session_id: str, patch: ViewPathPatch) 
         INSERT INTO view_path_points (
             id, session_id, video_id, take_id, path_revision, seq, t_ms,
             yaw, pitch, fov_h, fov_v, roll, enabled, cut, locked,
-            smooth_follow, input, created_at
+            smooth_follow, interpolation, transition_ms, input, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [point_params(session_id, patch, point, now) for point in patch.points],
     )
     mark_minutes(conn, session_id, patch.replace_range.start_ms, patch.replace_range.end_ms, "dirty", now)
+
+
+def save_effect_events_patch(conn: sqlite3.Connection, session_id: str, patch: EffectEventsPatch) -> None:
+    now = utc_now()
+    payload = patch.model_dump(mode="json", by_alias=True)
+    patch_id = new_id("effect_patch")
+    conn.execute(
+        """
+        INSERT INTO effect_event_patches (
+            id, session_id, video_id, effect_revision,
+            replace_start_ms, replace_end_ms, reason, patch_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            patch_id,
+            session_id,
+            patch.video_id,
+            patch.effect_revision,
+            patch.replace_range.start_ms,
+            patch.replace_range.end_ms,
+            patch.replace_range.reason,
+            json.dumps(payload),
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        DELETE FROM effect_events
+        WHERE session_id = ?
+            AND start_ms < ?
+            AND end_ms > ?
+        """,
+        (session_id, patch.replace_range.end_ms, patch.replace_range.start_ms),
+    )
+    conn.executemany(
+        """
+        INSERT INTO effect_events (
+            id, session_id, video_id, effect_revision, seq, event_name,
+            start_ms, end_ms, params_json, enabled, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [effect_event_params(session_id, patch, event, now) for event in patch.events],
+    )
+    mark_minutes(conn, session_id, patch.replace_range.start_ms, patch.replace_range.end_ms, "dirty", now)
+
+
+def effect_event_params(
+    session_id: str,
+    patch: EffectEventsPatch,
+    event: EffectEvent,
+    now: str,
+) -> tuple[Any, ...]:
+    return (
+        new_id("effect"),
+        session_id,
+        patch.video_id,
+        patch.effect_revision,
+        event.seq,
+        event.event_name,
+        event.start_ms,
+        event.end_ms,
+        json.dumps(event.params),
+        int(event.enabled),
+        now,
+    )
+
+
+def list_effect_events(
+    conn: sqlite3.Connection,
+    session_id: str,
+    start_ms: int,
+    end_ms: int,
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT event_name, start_ms, end_ms, params_json, enabled
+        FROM effect_events
+        WHERE session_id = ?
+            AND enabled = 1
+            AND start_ms < ?
+            AND end_ms > ?
+        ORDER BY start_ms, seq
+        """,
+        (session_id, end_ms, start_ms),
+    ).fetchall()
+    return [
+        {
+            "event_name": row["event_name"],
+            "start_ms": int(row["start_ms"]),
+            "end_ms": int(row["end_ms"]),
+            "params": json.loads(row["params_json"] or "{}"),
+            "enabled": bool(row["enabled"]),
+        }
+        for row in rows
+    ]
 
 
 def point_params(session_id: str, patch: ViewPathPatch, point: ViewPathPoint, now: str) -> tuple[Any, ...]:
@@ -372,6 +504,8 @@ def point_params(session_id: str, patch: ViewPathPatch, point: ViewPathPoint, no
         int(point.cut),
         int(point.locked),
         int(point.smooth_follow),
+        point.interpolation,
+        point.transition_ms,
         point.input,
         now,
     )
@@ -406,181 +540,6 @@ def export_response(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         "createdAt": data["created_at"],
         "updatedAt": data["updated_at"],
     }
-
-
-def run_ffmpeg_segment(
-    source_path: Path,
-    target_path: Path,
-    start_ms: int,
-    duration_ms: int,
-    yaw: float,
-    pitch: float,
-    h_fov: float,
-    v_fov: float,
-    fps: int = 30,
-) -> None:
-    duration_seconds = max(duration_ms / 1000, 0.05)
-    start_seconds = max(start_ms / 1000, 0)
-    vf = (
-        "v360=input=equirect:output=flat:"
-        f"yaw={yaw:.4f}:pitch={pitch:.4f}:"
-        f"h_fov={h_fov:.4f}:v_fov={v_fov:.4f}:w=1280:h=720,"
-        f"fps={fps},"
-        "format=yuv420p"
-    )
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        f"{start_seconds:.3f}",
-        "-t",
-        f"{duration_seconds:.3f}",
-        "-i",
-        str(source_path),
-        "-vf",
-        vf,
-        "-an",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-movflags",
-        "+faststart",
-        str(target_path),
-    ]
-    subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
-
-
-def run_ffmpeg_chunked_v360(
-    source_path: Path,
-    target_path: Path,
-    work_dir: Path,
-    points: list[dict[str, float]],
-    duration_ms: int,
-    source_start_ms: int = 0,
-    chunk_ms: int = 500,
-    fps: int = 30,
-) -> None:
-    if len(points) < 2:
-        raise RuntimeError("Need at least two path points for chunked render")
-
-    work_dir.mkdir(parents=True, exist_ok=True)
-    chunk_paths: list[Path] = []
-    current_ms = 0
-    chunk_index = 0
-    while current_ms < duration_ms:
-        next_ms = min(current_ms + chunk_ms, duration_ms)
-        chunk_duration_ms = next_ms - current_ms
-        sample_ms = current_ms + chunk_duration_ms // 2
-        chunk_path = work_dir / f"chunk-{chunk_index:04d}.mp4"
-        run_ffmpeg_segment(
-            source_path,
-            chunk_path,
-            source_start_ms + current_ms,
-            chunk_duration_ms,
-            interpolate_path_value(points, sample_ms, "yaw"),
-            interpolate_path_value(points, sample_ms, "pitch"),
-            interpolate_path_value(points, sample_ms, "fov_h"),
-            interpolate_path_value(points, sample_ms, "fov_v"),
-            fps=fps,
-        )
-        chunk_paths.append(chunk_path)
-        chunk_index += 1
-        current_ms = next_ms
-
-    if not chunk_paths:
-        raise RuntimeError("No chunks rendered")
-    if len(chunk_paths) == 1:
-        shutil.copy2(chunk_paths[0], target_path)
-    else:
-        concat_segments_reencode(chunk_paths, work_dir / "chunks.txt", target_path, fps=fps)
-
-
-def interpolate_path_value(points: list[dict[str, float]], t_ms: int, key: str) -> float:
-    if t_ms <= points[0]["t_ms"]:
-        return float(points[0][key])
-    if t_ms >= points[-1]["t_ms"]:
-        return float(points[-1][key])
-    for index in range(len(points) - 1):
-        left = points[index]
-        right = points[index + 1]
-        if left["t_ms"] <= t_ms <= right["t_ms"]:
-            span = max(right["t_ms"] - left["t_ms"], 1)
-            alpha = (t_ms - left["t_ms"]) / span
-            return float(left[key]) + (float(right[key]) - float(left[key])) * alpha
-    return float(points[-1][key])
-
-
-def run_ffmpeg_dynamic_v360(
-    source_path: Path,
-    target_path: Path,
-    command_path: Path,
-    points: list[dict[str, float]],
-    duration_ms: int,
-    source_start_ms: int = 0,
-    fps: int = 30,
-) -> None:
-    if len(points) < 2:
-        raise RuntimeError("Need at least two path points for dynamic render")
-
-    frame_step_ms = max(int(1000 / fps), 1)
-    command_lines: list[str] = []
-    for t_ms in range(0, duration_ms + frame_step_ms, frame_step_ms):
-        clamped_t_ms = min(t_ms, duration_ms)
-        timestamp = clamped_t_ms / 1000
-        yaw = interpolate_path_value(points, clamped_t_ms, "yaw")
-        pitch = interpolate_path_value(points, clamped_t_ms, "pitch")
-        h_fov = interpolate_path_value(points, clamped_t_ms, "fov_h")
-        v_fov = interpolate_path_value(points, clamped_t_ms, "fov_v")
-        command_lines.extend(
-            [
-                f"{timestamp:.3f} v360 yaw {yaw:.6f};",
-                f"{timestamp:.3f} v360 pitch {pitch:.6f};",
-                f"{timestamp:.3f} v360 h_fov {h_fov:.6f};",
-                f"{timestamp:.3f} v360 v_fov {v_fov:.6f};",
-            ]
-        )
-    command_path.write_text("\n".join(command_lines) + "\n", encoding="utf-8")
-
-    command_file = command_path.relative_to(ROOT_DIR).as_posix()
-    vf = (
-        f"sendcmd=f={command_file},"
-        "v360@v360=input=equirect:output=flat:"
-        f"yaw={float(points[0]['yaw']):.6f}:pitch={float(points[0]['pitch']):.6f}:"
-        f"h_fov={float(points[0]['fov_h']):.6f}:v_fov={float(points[0]['fov_v']):.6f}:"
-        f"w=1280:h=720,fps={fps},format=yuv420p"
-    )
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        f"{max(source_start_ms / 1000, 0):.3f}",
-        "-t",
-        f"{duration_ms / 1000:.3f}",
-        "-i",
-        str(source_path),
-        "-vf",
-        vf,
-        "-an",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-movflags",
-        "+faststart",
-        str(target_path),
-    ]
-    subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=120, cwd=ROOT_DIR)
 
 
 def concat_segments(segment_paths: list[Path], list_path: Path, target_path: Path) -> None:

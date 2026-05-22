@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { LogoutButton } from "@/components/LogoutButton";
+import { MobileShell } from "@/components/mobile/MobileShell";
+import { StatusBadge } from "@/components/mobile/StatusBadge";
+import {
+  formatBytes,
+  formatDate,
+  formatDuration,
+  formatFps,
+  formatResolution
+} from "@/components/mobile/format";
 import { VideoUploadForm } from "@/components/VideoUploadForm";
 import { getMe, listVideos } from "@/lib/api";
 import type { VideoSummary } from "@/lib/api";
@@ -26,59 +34,97 @@ export default async function MobileVideosPage() {
     }
   }
 
-  return (
-    <main>
-      <div className="shell stack">
-        <section className="panel stack">
-          <p className="muted">Mobile Web</p>
-          <h1>我的视频</h1>
-          <p className="muted">
-            {email ? `当前用户：${email}` : "请先登录，再上传和处理 360 视频。"}
-          </p>
-          <div className="button-row">
-            <Link className="button" href="/">
-              返回首页
-            </Link>
-            <Link className="button" href="/mobile/login">
-              登录/注册
-            </Link>
-            <Link className="button" href="/xr/videos">
-              WebXR 列表
-            </Link>
-            {email ? <LogoutButton /> : null}
-          </div>
-        </section>
+  const readyCount = videos.filter((video) => video.status === "ready_for_xr").length;
 
-        {email ? (
-          <section className="panel stack">
-          <h2>上传</h2>
-          <VideoUploadForm />
-          </section>
+  return (
+    <MobileShell email={email} title="我的视频">
+      <section className="dashboard-strip">
+        <div>
+          <span>{videos.length}</span>
+          <p>视频</p>
+        </div>
+        <div>
+          <span>{readyCount}</span>
+          <p>可进入 WebXR</p>
+        </div>
+        <div>
+          <span>{email ? "已登录" : "未登录"}</span>
+          <p>{email ?? "Account"}</p>
+        </div>
+      </section>
+
+      <section className="mobile-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Upload</p>
+            <h2>上传 360 视频</h2>
+          </div>
+        </div>
+        <VideoUploadForm />
+      </section>
+
+      <section className="mobile-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Library</p>
+            <h2>视频列表</h2>
+          </div>
+          <Link className="button" href="/xr/videos">
+            WebXR 列表
+          </Link>
+        </div>
+
+        {error ? <p className="error-text">{error}</p> : null}
+        {videos.length === 0 && !error ? (
+          <div className="empty-state">
+            <strong>暂无视频</strong>
+            <p>先上传一段 360 MP4，上传完成后它会出现在这里。</p>
+          </div>
         ) : null}
 
-        <section className="panel stack">
-          <h2>视频列表</h2>
-          {error ? <p className="error-text">{error}</p> : null}
-          {videos.length === 0 && !error ? <p className="muted">暂无视频。</p> : null}
-          <div className="table-list">
-            {videos.map((video) => (
-              <div className="table-row" key={video.id}>
+        <div className="video-card-list">
+          {videos.map((video) => (
+            <article className="video-card" key={video.id}>
+              <div className="video-card-main">
                 <div>
-                  <strong>{video.filename || video.id}</strong>
-                  <p className="muted">id: {video.id}</p>
+                  <h3>{video.filename || video.id}</h3>
+                  <p>{video.id}</p>
                 </div>
-                <div className="status-pill">{video.status}</div>
+                <StatusBadge status={video.status} />
+              </div>
+
+              <dl className="metric-grid">
+                <div>
+                  <dt>时长</dt>
+                  <dd>{formatDuration(video.durationMs)}</dd>
+                </div>
+                <div>
+                  <dt>规格</dt>
+                  <dd>{formatResolution(video.width, video.height)}</dd>
+                </div>
+                <div>
+                  <dt>大小</dt>
+                  <dd>{formatBytes(video.fileSize)}</dd>
+                </div>
+                <div>
+                  <dt>帧率</dt>
+                  <dd>{formatFps(video.fps)}</dd>
+                </div>
+              </dl>
+
+              <div className="card-footer">
+                <span>更新于 {formatDate(video.updatedAt ?? video.createdAt)}</span>
                 <Link
                   className="button primary"
                   href={`/mobile/videos/${encodeURIComponent(video.id)}`}
                 >
-                  查看
+                  查看详情
                 </Link>
               </div>
-            ))}
-          </div>
-        </section>
-      </div>
-    </main>
+            </article>
+          ))}
+        </div>
+      </section>
+    </MobileShell>
   );
 }

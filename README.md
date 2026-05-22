@@ -11,13 +11,19 @@ apps/web
 Next.js mobile web and WebXR routes for login, upload, session creation, fixed-path test processing, and export download.
 
 apps/api
-FastAPI backend for auth, upload, path patch storage, FFmpeg v360 smoke rendering, and export download.
+FastAPI backend for auth, upload, path patch storage, per-frame 360 remap smoke rendering, and export download.
 
-plan
-Planning documents for Android web, WebXR, and backend.
+docs
+Architecture notes, implementation specs, and stage records.
 
 references/github
 Local shallow clones of reference open-source projects.
+```
+
+Documentation starts at:
+
+```text
+docs/README.md
 ```
 
 Current test loop:
@@ -85,19 +91,20 @@ Open the WebXR environment check page:
 http://localhost:3000/xr/dev-check
 ```
 
-Open the first runnable WebXR scene:
+Open the Quest / Meta WebXR playback entry:
 
 ```text
 http://localhost:3000/xr/hello
 ```
 
-Open the same page with the built-in mock session for automated smoke testing:
+Open the desktop playback lab for simulator, HLS switching, mock sessions, and smoke testing:
 
 ```text
-http://localhost:3000/xr/hello?mock-xr=1
+http://localhost:3000/xr/playback-lab
+http://localhost:3000/xr/playback-lab?mock-xr=1
 ```
 
-Use the `Start Simulator` button on `/xr/hello` for a built-in desktop headset simulator. It renders a left-eye/right-eye split view and lets you drag the mouse or use WASD/arrow keys to simulate head movement.
+Use the `Start Simulator` button on `/xr/playback-lab` for the built-in desktop headset simulator. It renders a left-eye/right-eye split view and lets you drag the mouse or use WASD/arrow keys to simulate head movement. The `/xr/hello` route is intentionally kept close to the real Quest path and no longer carries the desktop simulator or mock session UI.
 
 For desktop WebXR simulation, install Meta Immersive Web Emulator in Chrome or Edge, then open DevTools and use the WebXR panel to enable a simulated headset.
 

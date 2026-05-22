@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -29,10 +29,13 @@ class ViewFov(BaseModel):
     v: float
 
 
+PatchReason = Literal["live", "replay", "discard", "restore", "cut", "fov", "lock", "effect"]
+
+
 class ReplaceRange(BaseModel):
     start_ms: int = Field(alias="startMs")
     end_ms: int = Field(alias="endMs")
-    reason: Literal["live", "replay", "discard", "restore", "cut", "fov", "lock"]
+    reason: PatchReason
 
 
 class ViewPathPoint(BaseModel):
@@ -45,6 +48,8 @@ class ViewPathPoint(BaseModel):
     cut: bool = False
     locked: bool = False
     smooth_follow: bool = Field(default=True, alias="smoothFollow")
+    interpolation: Literal["linear", "fast", "hold"] = "linear"
+    transition_ms: int = Field(default=0, alias="transitionMs")
     input: Literal["head_gaze", "controller_ray"] = "head_gaze"
 
 
@@ -56,6 +61,32 @@ class ViewPathPatch(BaseModel):
     path_revision: int = Field(alias="pathRevision")
     replace_range: ReplaceRange = Field(alias="replaceRange")
     points: list[ViewPathPoint]
+
+
+EffectEventName = Literal[
+    "fadeBlack",
+    "fadeOutBlack",
+    "fadeInBlack",
+    "highlight",
+]
+
+
+class EffectEvent(BaseModel):
+    seq: int
+    event_name: EffectEventName = Field(alias="eventName")
+    start_ms: int = Field(alias="startMs")
+    end_ms: int = Field(alias="endMs")
+    params: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class EffectEventsPatch(BaseModel):
+    version: Literal[1] = 1
+    video_id: str = Field(alias="videoId")
+    session_id: str = Field(alias="sessionId")
+    effect_revision: int = Field(alias="effectRevision")
+    replace_range: ReplaceRange = Field(alias="replaceRange")
+    events: list[EffectEvent]
 
 
 class PlaybackPreviewState(BaseModel):

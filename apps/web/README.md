@@ -1,6 +1,6 @@
-# Web App Scaffold
+# Web App
 
-Next.js placeholder app for both flat mobile web and WebXR entrypoints.
+Next.js app for both flat mobile web and WebXR entrypoints.
 
 ## Routes
 
@@ -25,6 +25,12 @@ WebXR cut session placeholder.
 
 /xr/dev-check
 WebXR browser capability check placeholder.
+
+/xr/hello
+Quest / Meta WebXR playback entry. Uses the real browser WebXR session path and excludes desktop simulator/mock controls.
+
+/xr/playback-lab
+Desktop playback lab for simulator, MP4/HLS switching, mock-xr smoke tests, debug logs, and emulator fallback.
 ```
 
 ## Environment
@@ -33,6 +39,10 @@ WebXR browser capability check placeholder.
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
-## Notes
+## Docs
 
-This app currently contains only placeholder screens and shared protocol TypeScript types. Upload UI, WebXR rendering, and API calls are not wired yet.
+```text
+../../docs/specs/mobile-web.md
+../../docs/specs/webxr.md
+../../docs/records/webxr-playback-stage.md
+```

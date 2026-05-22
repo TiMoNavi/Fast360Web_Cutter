@@ -13,9 +13,16 @@
     "test": "npm run typecheck && npm run build"
   },
   "dependencies": {
+    "@pmndrs/pointer-events": "^6.6.29",
+    "@pmndrs/uikit": "^1.0.72",
+    "@pmndrs/uikit-default": "^1.0.72",
+    "@pmndrs/uikit-lucide": "^1.0.72",
+    "@types/qrcode": "^1.5.6",
     "@webxr-input-profiles/motion-controllers": "^1.0.0",
+    "aframe": "^1.7.1",
     "hls.js": "^1.6.16",
     "next": "^15.0.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "three": "^0.177.0"

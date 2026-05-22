@@ -28,6 +28,8 @@ export type ViewPathPoint = {
   cut: boolean;
   locked: boolean;
   smoothFollow: boolean;
+  interpolation?: "linear" | "fast" | "hold";
+  transitionMs?: number;
   input: "head_gaze" | "controller_ray";
 };
 
@@ -43,6 +45,34 @@ export type ViewPathPatch = {
     reason: "live" | "replay" | "discard" | "restore" | "cut" | "fov" | "lock";
   };
   points: ViewPathPoint[];
+};
+
+export type EffectEventName =
+  | "fadeBlack"
+  | "fadeOutBlack"
+  | "fadeInBlack"
+  | "highlight";
+
+export type EffectEvent = {
+  seq: number;
+  eventName: EffectEventName;
+  startMs: number;
+  endMs: number;
+  params?: Record<string, unknown>;
+  enabled?: boolean;
+};
+
+export type EffectEventsPatch = {
+  version: 1;
+  videoId: string;
+  sessionId: string;
+  effectRevision: number;
+  replaceRange: {
+    startMs: number;
+    endMs: number;
+    reason: "effect";
+  };
+  events: EffectEvent[];
 };
 
 export type PlaybackClientState = {
