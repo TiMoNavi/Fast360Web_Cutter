@@ -412,3 +412,126 @@ cut=true 不跨点插值。
 某一分钟失败不阻止其他分钟继续处理。
 最终 MP4 可以下载。
 ```
+
+---
+
+## 当前情况
+
+已完成：
+
+```text
+已建立 FastAPI 后端骨架：apps/api。
+已建立 Pydantic 协议模型：ClipEditConfig、ViewPathPatch、ViewPathPoint、PlaybackClientState。
+已建立真实 API 路由骨架：videos、cut_sessions、path-patches、playback-state、status、exports。
+已建立 SQLite 存储层：apps/api/app/storage.py。
+已建立本地数据库初始化逻辑：storage/app.db。
+已建立本地文件存储目录：storage/videos、storage/exports、storage/tmp、storage/sample-videos。
+已建立 users、auth_sessions、videos、cut_sessions、clip_edit_configs、view_path_patches、view_path_points、minute_segments、exports 表。
+已实现注册、登录、当前用户、登出接口，并用 tid_session cookie 保护视频、session、export 资源。
+POST /api/videos/upload 已能保存上传文件并写入 videos 表。
+GET /api/videos 和 GET /api/videos/:videoId 已读取真实 SQLite 数据。
+POST /api/cut-sessions 已能创建 session 并保存 ClipEditConfig。
+GET /api/cut-sessions/:sessionId 和 PUT /api/cut-sessions/:sessionId/config 已可读取和更新 session 配置。
+POST /api/cut-sessions/:sessionId/path-patches 已能保存 patch、按 replaceRange 覆盖旧点、写入 view_path_points。
+replaceRange 覆盖语义已按 [startMs, endMs) 实现，避免误删下一段起点。
+GET /api/cut-sessions/:sessionId/status 已能返回真实 minute_segments 计数。
+POST /api/cut-sessions/:sessionId/render-test 已能读取 ViewPathPoint，调用 FFmpeg v360 分段静态投影生成短测试 MP4。
+GET /api/exports/:exportId 已能返回导出状态。
+GET /api/exports/:exportId/download 已能在 export ready 后返回真实 MP4 文件。
+已添加本地前后端 CORS，支持 http://localhost:3000 调用 API。
+已建立 apps/api/requirements.txt。
+已建立 apps/api/README.md。
+Python compileall 检查通过。
+FastAPI app 可导入。
+本地 API 服务已可访问：http://localhost:8000/health。
+已准备 360 测试视频脚本：npm run sample:video，目标文件为 storage/sample-videos/pano.mp4。
+已下载本地参考项目：tusd、py360convert。
+```
+
+部分完成：
+
+```text
+当前使用 SQLite + 本地文件作为 MVP 存储，后续产品化需要迁移 PostgreSQL / 对象存储。
+用户系统已经有最小 cookie 会话和 user_id 隔离，但还没有密码重置、邮箱验证、生产安全配置和权限管理。
+视频 metadata 会优先用 ffprobe，失败时回落到 placeholder。
+minute_segments 当前由 path patch 标记 dirty，render-test 成功后可把测试范围标记 done，但还没有正式 60 秒分片队列。
+playback-state 目前只做请求验收，没有持久化日志。
+exports 已支持测试导出下载，但只覆盖同步短视频 smoke render，不是生产导出管线。
+FFmpeg v360 已用于固定环绕测试导出，但还没有正式 60 秒分片、dirty 重渲染和 concat。
+```
+
+未开始：
+
+```text
+断点续传 tusd 集成。
+60 秒分片任务。
+ready 条件判断和边界点补齐。
+dirty 分片重渲染队列。
+concat 导出。
+生产级 export 文件生成和下载策略。
+```
+
+## 当前完成度
+
+```text
+框架搭建：70%
+协议模型：60%
+API：80%
+数据库：60%
+上传存储：45%
+路径时间线：45%
+后端裁剪：20%
+```
+
+## 下一步规划
+
+优先级 1：补齐共享数据库 MVP 的工程细节。
+
+```text
+增加轻量 migration 机制，避免后续 schema 改动只能删库。
+继续收敛 user_id 兼容逻辑，明确 legacy demo 数据的迁移策略。
+完善 video/session/export 的列表关联查询，支撑安卓端详情页和导出详情页。
+```
+
+优先级 2：增强真实视频上传 MVP。
+
+```text
+增加 content-type / 后缀 / 文件大小校验。
+增加失败清理逻辑，避免数据库记录和文件存储不一致。
+补 ffprobe 失败原因记录。
+之后再升级 tusd。
+```
+
+优先级 3：完善 cut session 和状态。
+
+```text
+支持查询某个 video 的最近 session。
+实现 abandon session 后 minute_segments 和待处理任务的级联状态更新。
+让状态返回 ready / dirty / rendering / done / discarded / failed 的完整计数。
+```
+
+优先级 4：强化 ViewPathPatch 校验和覆盖。
+
+```text
+校验 points 必须全部落在 replaceRange 内。
+校验 pathRevision 单调递增或定义覆盖冲突策略。
+实现 done -> dirty 的重渲染队列语义。
+补按分钟查询最终 view_path_points 的接口或内部函数。
+```
+
+优先级 5：实现裁剪任务骨架。
+
+```text
+当某分钟 ready 时创建 minute_segments 记录。
+把当前同步 render-test 拆成可排队的 rendering -> done。
+打通安卓端分钟进度展示。
+```
+
+优先级 6：接入 FFmpeg v360。
+
+```text
+保留当前固定环绕短测试作为 smoke render。
+扩展到固定 yaw/pitch/FOV 的 60 秒裁剪。
+当前先用短子段近似动态路径；后续再评估逐帧 remap 或其他更平滑方案。
+最后评估 PyAV + OpenCV remap fallback。
+```

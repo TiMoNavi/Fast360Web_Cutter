@@ -256,3 +256,96 @@ WebXR 端完成路径上传后，安卓端能看到分钟级进度变化。
 导出完成后安卓端能下载 MP4。
 安卓端没有任何裁剪入口或陀螺仪裁剪控件。
 ```
+
+---
+
+## 当前情况
+
+已完成：
+
+```text
+已建立 Next.js 前端骨架：apps/web。
+已建立安卓端路由：/mobile/videos。
+已建立登录/注册路由：/mobile/login。
+已建立视频详情路由：/mobile/videos/[videoId]。
+已建立导出详情路由：/mobile/exports/[exportId]。
+已建立全局占位样式和 PlaceholderPage 组件。
+已建立前端 API client：apps/web/src/lib/api.ts。
+已建立认证组件：AuthForm。
+已建立最小上传组件：VideoUploadForm。
+已建立 WebXR session 创建/入口组件：XrSessionLink。
+已建立移动端详情页里的 CutSessionControls，可创建 session 并进入 WebXR。
+已建立导出状态读取和 ready 后下载按钮。
+已下载本地参考项目：shadcn-ui、uppy、tus-js-client、vidstack-player。
+前端 build 已通过。
+本地 Web 服务已可访问：http://localhost:3000。
+```
+
+部分完成：
+
+```text
+注册/登录已接入真实后端 cookie session，移动端页面会在未登录时跳转 /mobile/login。
+GET /api/videos 已接入真实后端列表。
+POST /api/videos/upload 已接入最小上传闭环，文件会写入后端 SQLite 和 storage/videos。
+/mobile/videos/[videoId] 已能读取真实视频详情。
+视频详情页已能创建 WebXR cut session，并生成 /xr/videos/:videoId/session/:sessionId 入口链接。
+/mobile/exports/[exportId] 已能读取导出状态，ready 后可下载 MP4。
+WebXR 固定环绕测试完成后，安卓端详情页能看到 latestExport 和下载入口。
+页面仍以占位 UI 为主，尚未进入正式移动端界面打磨。
+上传技术栈已确定，但当前只接 FastAPI UploadFile，Uppy / tus-js-client 尚未接入页面。
+二维码入口已规划，但 qrcode 尚未安装和实现。
+分钟级状态已有后端接口，但安卓端展示还需要继续细化。
+```
+
+未开始：
+
+```text
+WebXR 入口二维码生成。
+裁剪进度轮询的正式 UI。
+放弃 session 操作。
+上传进度、错误提示、文件大小限制和断点续传。
+```
+
+## 当前完成度
+
+```text
+框架搭建：70%
+占位页面：70%
+真实业务功能：45%
+上传链路：35%
+状态/下载链路：35%
+```
+
+## 下一步规划
+
+优先级 1：把移动端页面从占位状态推进到可用 MVP。
+
+```text
+完善 /mobile/videos 的列表布局、空状态、上传成功刷新和错误状态。
+完善 /mobile/videos/:videoId 的视频元数据、session 状态、WebXR 入口和最近导出信息。
+确认 WebXR 端读取的是同一个 videoId 和 sessionId。
+```
+
+优先级 2：增强 MVP 上传。
+
+```text
+保留 FastAPI UploadFile 作为当前 MVP。
+增加上传进度、失败提示、类型/大小限制。
+之后再升级为 Uppy + tus-js-client + tusd。
+```
+
+优先级 3：接入二维码和任务控制。
+
+```text
+生成 Quest 可扫码打开的二维码。
+显示 session 分钟级状态。
+增加放弃当前 session 操作。
+```
+
+优先级 4：接入下载。
+
+```text
+把当前导出下载从 JSON/按钮占位整理成移动端正式 UI。
+在视频详情页和导出详情页之间补更清晰的返回路径。
+失败时显示后端错误原因。
+```

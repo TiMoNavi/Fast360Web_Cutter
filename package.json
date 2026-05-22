@@ -1,0 +1,29 @@
+{
+  "name": "the-invisible-director",
+  "private": true,
+  "version": "0.1.0",
+  "description": "WebXR 360 video reframing prototype with Android web upload/download and backend clipping.",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "clean:web": "node scripts/clean-web.mjs",
+    "reset:web": "node scripts/reset-web-dev-cache.mjs",
+    "chrome:webxr": "powershell -ExecutionPolicy Bypass -File scripts/start-webxr-chrome.ps1",
+    "extension:webxr:prepare": "powershell -ExecutionPolicy Bypass -File scripts/prepare-webxr-extension.ps1",
+    "dev": "npm run dev:web",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:web:reset": "npm run reset:web && npm --workspace apps/web run dev",
+    "dev:web:clean": "npm run clean:web && npm run dev:web",
+    "dev:web:host": "npm --workspace apps/web run dev:host",
+    "dev:web:host:clean": "npm run clean:web && npm run dev:web:host",
+    "dev:web:https": "npm --workspace apps/web run dev:https",
+    "build:web": "npm --workspace apps/web run build",
+    "typecheck:web": "npm --workspace apps/web run typecheck",
+    "test:web": "npm --workspace apps/web run test",
+    "sample:video": "python scripts/prepare_sample_video.py",
+    "sample:stream": "node scripts/prepare-sample-stream.mjs",
+    "dev:api": "python -m uvicorn app.main:app --reload --app-dir apps/api",
+    "check:api": "python -m compileall apps/api"
+  }
+}

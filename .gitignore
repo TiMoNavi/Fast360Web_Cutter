@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# Build output
+.next/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# Runtime files
+.env
+.env.local
+.logs/
+logs/
+.tmp/
+uploads/
+storage/
+exports/
+
+# Test output
+test-results/
+playwright-report/
+
+# Local reference clones
+references/github/*
+!references/github/README.md
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
