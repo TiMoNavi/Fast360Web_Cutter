@@ -14,7 +14,7 @@ const SOURCES = {
   },
   hls: {
     type: "hls",
-    url: "/api/sample-stream/index.m3u8"
+    url: "/xr/sample-stream/index.m3u8"
   }
 } satisfies Record<string, XrVideoSource>;
 
@@ -54,7 +54,9 @@ export function WebXrPlaybackLab() {
   const sourceRef = useRef<VideoSourceHandle | null>(null);
   const logIdRef = useRef(1);
   const [source, setSource] = useState<XrVideoSource>(SOURCES.file);
-  const [mockMode, setMockMode] = useState(false);
+  const [mockMode, setMockMode] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mock-xr") === "1"
+  );
   const [message, setMessage] = useState("Initializing playback lab...");
   const [logs, setLogs] = useState<XrLogEntry[]>([{ id: 0, line: "Page loaded" }]);
   const [videoStatus, setVideoStatus] = useState<VideoPlaybackStatus>("loading");

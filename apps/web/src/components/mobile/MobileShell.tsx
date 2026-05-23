@@ -8,29 +8,44 @@ import { LogoutButton } from "@/components/LogoutButton";
 
 type MobileShellProps = {
   children: ReactNode;
+  contentClassName?: string;
   email?: string | null;
-  title: string;
   eyebrow?: string;
+  title: string;
+  variant?: "default" | "vapor";
 };
 
 const navItems = [
-  { href: "/mobile/videos", label: "我的视频" },
-  { href: "/mobile/login", label: "登录注册" },
-  { href: "/xr/videos", label: "WebXR" }
+  { href: "/mobile/videos", label: "我的视频", meta: "上传、源视频、详情" },
+  { href: "/mobile/account/exports", label: "导出结果", meta: "裁剪 MP4 下载" },
+  { href: "/xr/player", label: "WebXR 入口", meta: "进入取景空间" },
+  { href: "/mobile/favorites", label: "我的收藏", meta: "常用素材与导出" }
 ];
 
-export function MobileShell({ children, email, title, eyebrow = "Mobile Web" }: MobileShellProps) {
+export function MobileShell({
+  children,
+  contentClassName,
+  email,
+  title,
+  eyebrow = "Mobile / Desktop",
+  variant = "default"
+}: MobileShellProps) {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
+  const [isUserOpen, setIsUserOpen] = useState(false);
+  const userInitial = email?.trim().slice(0, 1).toUpperCase() || "ID";
+  const shellClassName = variant === "vapor" ? "mobile-app mobile-app-vapor" : "mobile-app";
+  const contentClasses = ["mobile-content", contentClassName].filter(Boolean).join(" ");
 
   return (
-    <main className="mobile-app">
-      <aside className={`mobile-sidebar ${isOpen ? "open" : ""}`} aria-label="移动端导航">
+    <main className={shellClassName}>
+      <aside className={`mobile-sidebar ${isOpen ? "open" : ""}`} aria-label="主导航">
+        <div className="mobile-sidebar-glow" aria-hidden="true" />
         <div className="mobile-brand">
           <span className="mobile-brand-mark">ID</span>
           <div>
             <strong>Invisible Director</strong>
-            <span>{email ?? "未登录"}</span>
+            <span>看一遍，就剪完</span>
           </div>
         </div>
 
@@ -38,8 +53,12 @@ export function MobileShell({ children, email, title, eyebrow = "Mobile Web" }: 
           {navItems.map((item) => {
             const active =
               item.href === "/mobile/videos"
-                ? pathname.startsWith("/mobile/videos") || pathname.startsWith("/mobile/exports")
-                : pathname === item.href;
+                ? pathname.startsWith("/mobile/videos")
+                : item.href === "/mobile/account/exports"
+                  ? pathname.startsWith("/mobile/account/exports") || pathname.startsWith("/mobile/exports")
+                  : item.href === "/mobile/favorites"
+                    ? pathname.startsWith("/mobile/favorites")
+                    : pathname === item.href;
             return (
               <Link
                 className={active ? "mobile-nav-link active" : "mobile-nav-link"}
@@ -47,14 +66,48 @@ export function MobileShell({ children, email, title, eyebrow = "Mobile Web" }: 
                 key={item.href}
                 onClick={() => setIsOpen(false)}
               >
-                {item.label}
+                <span>{item.label}</span>
+                <small>{item.meta}</small>
               </Link>
             );
           })}
         </nav>
 
         <div className="mobile-sidebar-footer">
-          {email ? <LogoutButton /> : <Link className="button primary" href="/mobile/login">登录/注册</Link>}
+          {email ? (
+            <div className={`mobile-user-card ${isUserOpen ? "open" : ""}`}>
+              <button
+                aria-expanded={isUserOpen}
+                className="mobile-user-toggle"
+                onClick={() => setIsUserOpen((current) => !current)}
+                type="button"
+              >
+                <span className="mobile-user-avatar">{userInitial}</span>
+                <span className="mobile-user-text">
+                  <strong>当前账号</strong>
+                  <small>{email}</small>
+                </span>
+                <span className="mobile-user-chevron" aria-hidden="true" />
+              </button>
+
+              <div className="mobile-user-menu">
+                <Link href="/mobile/account/settings" onClick={() => setIsOpen(false)}>
+                  账号设置
+                </Link>
+                <Link href="/mobile/account/exports" onClick={() => setIsOpen(false)}>
+                  导出记录
+                </Link>
+                <Link href="/mobile/favorites" onClick={() => setIsOpen(false)}>
+                  我的收藏
+                </Link>
+                <LogoutButton />
+              </div>
+            </div>
+          ) : (
+            <Link className="button primary" href="/mobile/login">
+              登录/注册
+            </Link>
+          )}
         </div>
       </aside>
 
@@ -85,7 +138,7 @@ export function MobileShell({ children, email, title, eyebrow = "Mobile Web" }: 
             <h1>{title}</h1>
           </div>
         </header>
-        <div className="mobile-content">{children}</div>
+        <div className={contentClasses}>{children}</div>
       </div>
     </main>
   );

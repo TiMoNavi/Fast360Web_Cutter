@@ -1,174 +1,160 @@
 # WebXR 当前状态
 
-## 目标设计与当前事实
+> 代码基线：2026-05-23。本文描述当前仓库状态，不描述理想终局。
 
-整理版目标文档已经把下一阶段 WebXR 方向改为 A-Frame：
+## 一句话结论
 
-```text
-docs/project-docs/01-module-expectations/webxr/
-```
-
-这只是目标设计，不代表当前代码已经迁移到 A-Frame。当前实现仍主要沿用 Three.js、WebGLRenderer、VideoTexture、pmndrs/uikit 原型和现有 playback lab。后续实现 A-Frame 时，应把当前事实和目标设计分开维护，避免把原型能力写成已上线能力。
-
-## 已完成
-
-WebXR 播放端已经从旧的混合 demo 中拆出多个职责清晰的部分：
-
-```text
-/xr/hello
-真实 Quest / Meta WebXR 播放入口。
-使用 MetaWebXrPlayer。
-只保留真实 navigator.xr.requestSession("immersive-vr") 和 Three.js WebXRManager。
-
-/xr/playback-lab
-桌面开发和回归测试入口。
-包含桌面 stereo simulator、mock-xr、HLS/MP4 切换、debug log 和 emulator fallback。
-
-/xr/dev-check
-浏览器 WebXR 能力检查入口。
-
-/xr/workbench
-未来 WebXR 裁剪工作台 UI 原型。
-```
-
-播放组件位于：
-
-```text
-apps/web/src/components/xr/
-```
-
-核心组件：
-
-```text
-MetaWebXrPlayer.tsx
-真实 Quest / Meta WebXR 播放器。
-
-WebXrPlaybackLab.tsx
-开发测试播放器。
-
-VideoSphereScene.ts
-Three.js 360 球幕封装。
-
-videoSources.ts
-MP4 / HLS 视频源 helper。
-
-webXrLabCompat.ts
-lab 专用 XRWebGLBinding 兼容 shim。
-
-XrDebugLog.tsx
-lab/debug 日志组件。
-```
-
-## 当前播放能力
-
-已具备：
-
-```text
-HTMLVideoElement。
-THREE.VideoTexture。
-inside-out SphereGeometry。
-WebGLRenderer.xr。
-真实 immersive-vr session 请求。
-MP4 fixture 播放。
-HLS fixture lab 播放。
-桌面 stereo simulator。
-mock-xr smoke 测试入口。
-```
-
-## 当前业务 session 页
-
-真实业务入口：
+WebXR 已经进入 PC WebXR Editor 集成阶段。真实业务 session 页不再是 FixedOrbit 占位页，而是核心 PC 剪辑界面：
 
 ```text
 /xr/videos/:videoId/session/:sessionId
+apps/web/src/features/webxr/pc-editor/
 ```
 
-当前仍是裁剪占位页。它会：
+当前可以在 PC 上用键鼠和屏幕按钮验证 360 视频播放、固定屏幕遮罩、FOV/中心点调整、timeline bridge patch 发送和后端 accepted。VR 真机交互还没有进入本阶段验收。
+
+## 当前核心页面
+
+### `/xr/videos`
+
+WebXR 360 视频列表入口。用户从这里选择属于当前用户的 WebXR 360 视频，并进入对应 session。
+
+### `/xr/videos/:videoId/session/:sessionId`
+
+PC WebXR Editor 业务页面。当前已接入：
 
 ```text
-读取 videoId 和 sessionId。
-读取后端 video 详情。
-展示待接入模块说明。
-提供 FixedOrbitRenderButton。
-生成测试 ViewPathPatch。
-调用后端 render-test。
+真实 video.sourceUrl
+当前用户可访问的视频 source list
+A-Frame a-scene / a-videosphere
+黑色/渐变 crop mask 预览
+2D 屏幕空间播放条和 PC 工作台
+Meta XR Start 入口
+timeline bridge
+真实 ViewPathPatch / PlaybackClientState 发送
 ```
 
-它还没有：
+页面代码已集中到：
 
 ```text
-接入 MetaWebXrPlayer。
-播放真实上传视频。
-进入真实 immersive-vr 裁剪体验。
-采样头显姿态。
-读取 controller 输入。
-显示取景框、遮罩和 reticle。
-按 5Hz 输出真实 ViewPathPatch。
+apps/web/src/features/webxr/pc-editor/
 ```
 
-## 当前工作台原型
+业务 route 保持 thin server page：读取 params/cookie，调用 `buildPcEditorSessionModel`，渲染 `PcWebXrEditor`。
 
-`/xr/workbench` 是空间 UI 原型。它已经验证了一种方向：
+## PC 与 VR 坐标边界
+
+PC 模式：
 
 ```text
-左右透明面板。
-下方中控长桌。
-薄播放条。
-中央视野保持清空。
-Edit Ring 环形菜单原型。
-亮色玻璃风格。
-可请求 immersive-vr session。
+视觉体验：360 视频/camera 视角在固定屏幕遮罩背后移动。
+协议来源：timeline bridge 使用 crop mask state。
+验收重点：用户透过遮罩看到的中心 == ViewPathPatch.lastPoint.center。
 ```
 
-但它仍是 mock 状态：
+VR 模式：
 
 ```text
-不连接真实 /api/videos。
-不加载真实 VideoTexture。
-不读取真实 controller gamepad。
-不生成真实 ViewPathPatch。
+暂未作为当前验收目标。
+后续会单独处理视频空间、视线目标、遮罩目标和 controller 输入之间的关系。
 ```
 
-## 当前测试和验证
+这条边界很重要：PC 端不能直接用裸 camera pose 覆盖 crop mask state，否则容易出现“拖动方向看起来对，但后端裁剪方向反了”的错位。
 
-已有记录显示：
+## 控制层现状
+
+控制层已按“语义动作 + 输入适配器”拆开，方便后续 VR 复用：
 
 ```text
-build:web 通过。
-typecheck:web 通过。
-smoke:webxr 在 fresh dev server 上 7/7 通过。
+controls/operations/
+  cameraOperations.ts
+  maskOperations.ts
+  playbackOperations.ts
+  timelineOperations.ts
+  viewGeometry.ts
+
+controls/inputs/
+  usePcKeyboardShortcuts.ts
+  usePcWheelZoom.ts
+  usePcMaskPointerInput.ts
+  usePcEdgePan.ts
 ```
 
-smoke 主要覆盖：
+当前 PC 输入：
 
 ```text
-sample video Range。
-sample HLS playlist 和 segment。
-/xr/hello 不含 lab-only 控件。
-/xr/playback-lab 可模拟和切换 HLS。
-mock-xr 自动化。
+Space                 播放/暂停
+Q / E                 FOV 缩放
+W/A/S/D               平滑移动裁剪遮罩
+鼠标滚轮              缩放 360 视频/camera FOV
+T + 鼠标滚轮          连续调节预览播放速度，范围 0.1x..5x
+R + 鼠标滚轮          连续调节录制速度意图，范围 0.1x..5x
+F                     flush path
+C                     cut here
+P                     打开/关闭视频列表
 ```
 
-## 当前缺口
+同一个 operation 后续可以由 PC、自动化测试或 VR controller/head-gaze 触发，不应把具体键鼠事件写成业务结果。
 
-最重要缺口：
+`Ctrl+drag`、`Ctrl+Shift+click`、edge pan 这组 PC 手势已暂时下线，等待重新设计。底层 operation 保留，但 active editor 不再接入这些输入。
+
+播放速度和录制速度已经分离：
 
 ```text
-真实业务 session 页没有接上播放组件。
-真实上传视频 sourceUrl 没有进入 WebXR 播放层。
-真实头显和 controller 没有转为 ViewPathPoint。
-取景框和遮罩没有进入生产路径。
-路径 sampler 没实现。
-WebXR UI 原型没有和业务状态连接。
+Playback speed 只改变本地预览视频的 HTMLVideoElement.playbackRate。
+Record speed 进入 PC editor 状态和 PlaybackClientState.recording.recordingRate。
+当前正式导出仍不读取 PlaybackClientState；如果要让录制速度改变最终 MP4 时间轴，需要后续新增正式 timeline/effect 协议。
 ```
 
-## 建议下一步
+## 后端桥接
+
+后端协议不变，仍发送：
 
 ```text
-1. 在 /xr/videos/:videoId/session/:sessionId 中加载后端 video sourceUrl。
-2. 把真实 source 传给 MetaWebXrPlayer。
-3. 保持播放层不直接写路径。
-4. 新增独立 sampler，监听 video.currentTime 和目标取景中心。
-5. 先用 head-gaze 生成低频 ViewPathPatch。
-6. 再接 controller、取景框、遮罩和 Edit Ring。
+ViewPathPatch
+EffectEventsPatch
+PlaybackClientState
+```
+
+当前事件列表只是占位；discard/restore/effect 编辑仍未进入首轮集成。
+
+## dev/legacy 页面
+
+以下页面保留，不作为核心产品入口：
+
+```text
+/xr/aframe-player    dev/legacy A-Frame 播放器 smoke
+/xr/player-ui-lab    dev/legacy 2D 播放条视觉实验
+/xr/playback-lab     dev/legacy playback/mock XR 实验
+/xr/hello            dev/legacy Three.js / Meta WebXR 对照
+/xr/workbench        dev/legacy 早期工作台参考
+/xr/dev-check        dev/legacy 环境检查
+```
+
+`/xr/login` 保留为 WebXR 登录实验模块，不混入 PC editor。
+
+旧的 `src/components/aframe/*` 播放器相关入口目前多为兼容 wrapper，供 lab 页面和 smoke 测试继续使用。新产品代码应从 `@/features/webxr/pc-editor` 导入。
+
+## 当前自动化验收
+
+Playwright smoke 覆盖：
+
+```text
+注册唯一测试用户
+调用 /api/demo-videos/overpass-warmup/start 创建真实 session
+进入 /xr/videos/:videoId/session/:sessionId
+验证 A-Frame scene、videosphere、crop mask、PC 2D UI、Meta XR 入口
+验证 source list、播放速度、录制速度、Space、滚轮 FOV、W/A/S/D 组合平移、FOV 平滑过渡
+等待真实 /path-patches accepted
+检查 accepted patch 的 center/fov 与 crop mask state 一致
+```
+
+`/xr/aframe-player`、`/xr/player-ui-lab`、`/xr/playback-lab` 的 smoke 继续保留，作为 dev/legacy 回归。
+
+## 下一步风险
+
+```text
+用网格视频 render-test 校准最终 MP4 输出中心，确认球幕 -90deg 固定偏移不会导致导出错位。
+为 VR 真机定义单独的 input adapter，不复用 PC 的方向假设。
+把事件列表从占位推进到 discard/restore/effect 编辑。
 ```

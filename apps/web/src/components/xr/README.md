@@ -1,18 +1,21 @@
 # Legacy WebXR Components
 
-This folder contains the existing Three.js / pmndrs WebXR playback and workbench prototype code.
+This folder contains the older Three.js / pmndrs WebXR playback and workbench prototype code.
 
-The next WebXR direction is documented as an A-Frame-based design under:
-
-```text
-docs/project-docs/01-module-expectations/webxr/
-```
-
-For new A-Frame experiments, use separate components outside this legacy folder. The first minimal A-Frame sphere player lives in:
+The current product WebXR surface is now:
 
 ```text
-apps/web/src/components/aframe/AFrameVideoSpherePlayer.tsx
-apps/web/app/xr/aframe-player/page.tsx
+apps/web/src/features/webxr/pc-editor/
+/xr/videos/:videoId/session/:sessionId
 ```
 
-Do not delete or rewrite these legacy components until the A-Frame path has replaced the existing smoke coverage and business playback route.
+Keep these components for dev/legacy routes and smoke coverage:
+
+```text
+/xr/hello
+/xr/playback-lab
+/xr/workbench
+/xr/dev-check
+```
+
+New product code should not import from this folder. Put new WebXR editor work under `features/webxr/pc-editor/`, split across `data/`, `webxr/`, `ui/`, and `controls/`.

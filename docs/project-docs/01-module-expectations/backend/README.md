@@ -30,6 +30,7 @@ apps/api/app/routes/
 
 apps/api/app/services/
 放业务服务，例如认证、视频库、WebXR bridge、裁切调度。
+其中 timeline_assembler_service 负责把 WebXR patch 和散点编译成 ViewPathTimeline。
 
 apps/api/app/repositories/
 集中数据库读写。

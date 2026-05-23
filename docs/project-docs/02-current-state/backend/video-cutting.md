@@ -55,6 +55,12 @@ enabled/cut 分段、路径动态限制、fast transition 展开。
 apps/api/app/rendering/effects.py
 fade/highlight 等帧效果。
 
+apps/api/app/timeline_assembler.py
+当前可以生成 ViewPathTimeline 字典，供 review fixture 和后续文件化渲染使用。
+
+scripts/render_timeline_review_cases.py
+生成可观看的 timeline review cases，用于检查取景路径、跳过片段和效果事件是否正确。
+
 apps/api/app/rendering/v360_legacy.py
 旧 v360 对照方案。
 ```
@@ -70,4 +76,5 @@ dirty 分片不会自动重渲染。
 输出规格仍是 smoke render 的 1280x720。
 长视频会阻塞请求。
 性能还未达到生产级。
+render-test 尚未直接读取 ViewPathTimeline 文件。
 ```

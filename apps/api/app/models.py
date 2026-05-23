@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class OutputConfig(BaseModel):
@@ -63,21 +63,29 @@ class ViewPathPatch(BaseModel):
     points: list[ViewPathPoint]
 
 
-EffectEventName = Literal[
-    "fadeBlack",
-    "fadeOutBlack",
-    "fadeInBlack",
-    "highlight",
-]
+EffectFallback = Literal["ignore", "warn", "fail"]
+
+
+class EffectRenderPolicy(BaseModel):
+    fallback: EffectFallback = "warn"
+    requires: list[str] = Field(default_factory=list)
+    priority: int | None = None
+    conflict_group: str | None = Field(default=None, alias="conflictGroup")
 
 
 class EffectEvent(BaseModel):
     seq: int
-    event_name: EffectEventName = Field(alias="eventName")
+    event_name: str = Field(
+        alias="eventName",
+        validation_alias=AliasChoices("eventName", "type"),
+        serialization_alias="eventName",
+    )
+    display_name: str | None = Field(default=None, alias="displayName")
     start_ms: int = Field(alias="startMs")
     end_ms: int = Field(alias="endMs")
     params: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
+    render_policy: EffectRenderPolicy = Field(default_factory=EffectRenderPolicy, alias="renderPolicy")
 
 
 class EffectEventsPatch(BaseModel):
@@ -89,6 +97,13 @@ class EffectEventsPatch(BaseModel):
     events: list[EffectEvent]
 
 
+class SessionMusicConfig(BaseModel):
+    music_id: str | None = Field(default=None, alias="musicId")
+    enabled: bool = True
+    start_ms: int = Field(default=0, alias="startMs")
+    gain_db: float = Field(default=-10.0, alias="gainDb")
+
+
 class PlaybackPreviewState(BaseModel):
     brightness: float = 1.0
     contrast: float = 1.0
@@ -98,6 +113,7 @@ class PlaybackPreviewState(BaseModel):
 class PlaybackRecordingState(BaseModel):
     sampling_paused: bool = Field(default=False, alias="samplingPaused")
     discard_mode: bool = Field(default=False, alias="discardMode")
+    recording_rate: float = Field(default=1.0, alias="recordingRate")
 
 
 class PlaybackClientState(BaseModel):
@@ -132,3 +148,13 @@ class AuthRequest(BaseModel):
 class AuthUser(BaseModel):
     id: str
     email: str
+
+
+class ThumbnailRequest(BaseModel):
+    time_ms: int | None = Field(default=None, alias="timeMs")
+    yaw: float = 0
+    pitch: float = 0
+    h_fov: float = Field(default=100, alias="hFov")
+    v_fov: float = Field(default=56.25, alias="vFov")
+    width: int = 640
+    height: int = 360

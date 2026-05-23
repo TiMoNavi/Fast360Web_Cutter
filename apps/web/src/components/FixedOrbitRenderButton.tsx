@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { verticalFovFromHorizontal } from "@/features/webxr/pc-editor/viewFov";
 import { apiUrl, renderTest, sendViewPathPatch } from "@/lib/api";
 import type { ViewPathPatch, ViewPathPoint } from "@/lib/path-protocol";
 
@@ -45,7 +46,7 @@ function buildFixedOrbitPatch(videoId: string, sessionId: string, durationMs?: n
       },
       fov: {
         h: 90,
-        v: 50.6
+        v: verticalFovFromHorizontal(90)
       },
       roll: 0,
       enabled: true,
@@ -61,7 +62,7 @@ function buildFixedOrbitPatch(videoId: string, sessionId: string, durationMs?: n
       seq: points.length + 1,
       tMs: smokeDurationMs,
       center: { yaw: startYaw + yawSweep, pitch: 0 },
-      fov: { h: 90, v: 50.6 },
+      fov: { h: 90, v: verticalFovFromHorizontal(90) },
       roll: 0,
       enabled: true,
       cut: false,
@@ -179,7 +180,7 @@ function buildComplexMotionPatch(videoId: string, sessionId: string, durationMs?
       },
       fov: {
         h: hFov,
-        v: hFov * 9 / 16
+        v: verticalFovFromHorizontal(hFov)
       },
       roll: 0,
       enabled,

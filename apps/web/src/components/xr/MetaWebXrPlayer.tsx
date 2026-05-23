@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoSphereScene } from "./VideoSphereScene";
 import type { VideoPlaybackStatus, VideoSourceHandle, XrSessionState, XrSupportStatus, XrVideoSource } from "./types";
+import { setRendererSessionWithLabFallback } from "./webXrLabCompat";
 import { createHlsVideoSource, createMp4VideoSource } from "./videoSources";
 
 const DEFAULT_SOURCE: XrVideoSource = {
@@ -57,6 +58,7 @@ export function MetaWebXrPlayer({
   const [message, setMessage] = useState("Initializing Meta WebXR player...");
   const [videoStatus, setVideoStatus] = useState<VideoPlaybackStatus>("loading");
   const [sessionState, setSessionState] = useState<XrSessionState>("idle");
+  const [rendererPresenting, setRendererPresenting] = useState(false);
   const [canEnterVr, setCanEnterVr] = useState(false);
   const [xrStatus, setXrStatus] = useState<XrSupportStatus>({
     secureContext: false,
@@ -170,15 +172,22 @@ export function MetaWebXrPlayer({
       const session = await xr.requestSession("immersive-vr", {
         optionalFeatures: ["local-floor", "bounded-floor"]
       });
+      setMessage("Meta XR session granted. Binding renderer...");
 
       session.addEventListener("end", () => {
         updateSessionState("ended");
+        setRendererPresenting(false);
         setMessage("VR session ended.");
       });
 
-      await scene.renderer.xr.setSession(session as unknown as XRSession);
+      const usedLegacyLayerFallback = await setRendererSessionWithLabFallback(scene.renderer, session);
       updateSessionState("presenting");
-      setMessage("VR session is running. Rotate the Quest headset to look around the 360 video.");
+      setRendererPresenting(scene.renderer.xr.isPresenting);
+      setMessage(
+        usedLegacyLayerFallback
+          ? "VR session is running with XRWebGLLayer fallback."
+          : "VR session is running. Rotate the Quest headset to look around the 360 video."
+      );
     } catch (error) {
       updateSessionState("error");
       setMessage(error instanceof Error ? error.message : "Failed to enter VR.");
@@ -206,6 +215,9 @@ export function MetaWebXrPlayer({
             </span>
             <span className={sessionState === "presenting" ? "ok" : "bad"} data-testid="xr-session-state">
               session: {sessionState}
+            </span>
+            <span className={rendererPresenting ? "ok" : "bad"} data-testid="xr-renderer-presenting">
+              renderer.xr.isPresenting: {rendererPresenting ? "true" : "false"}
             </span>
           </div>
           <div className="button-row">

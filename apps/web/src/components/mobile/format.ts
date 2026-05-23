@@ -1,6 +1,6 @@
 export function formatBytes(value?: number | null) {
   if (!value || value <= 0) {
-    return "Unknown size";
+    return "未知大小";
   }
 
   const units = ["B", "KB", "MB", "GB"];
@@ -16,7 +16,7 @@ export function formatBytes(value?: number | null) {
 
 export function formatDuration(durationMs?: number | null) {
   if (!durationMs || durationMs <= 0) {
-    return "Unknown duration";
+    return "未知时长";
   }
 
   const totalSeconds = Math.round(durationMs / 1000);
@@ -26,16 +26,16 @@ export function formatDuration(durationMs?: number | null) {
 }
 
 export function formatResolution(width?: number | null, height?: number | null) {
-  return width && height ? `${width} x ${height}` : "Unknown resolution";
+  return width && height ? `${width} x ${height}` : "未知分辨率";
 }
 
 export function formatFps(fps?: number | null) {
-  return fps ? `${Number(fps).toFixed(Number(fps) % 1 === 0 ? 0 : 2)} fps` : "Unknown fps";
+  return fps ? `${Number(fps).toFixed(Number(fps) % 1 === 0 ? 0 : 2)} fps` : "未知帧率";
 }
 
 export function formatDate(value?: string | null) {
   if (!value) {
-    return "Unknown time";
+    return "未知时间";
   }
 
   const date = new Date(value);
@@ -62,7 +62,7 @@ export function statusLabel(status?: string | null) {
     export_ready: "可下载",
     ready: "可下载",
     failed: "失败",
-    dirty: "待重渲染",
+    dirty: "待重新渲染",
     discarded: "已丢弃",
     abandoned: "已放弃",
     done: "完成"

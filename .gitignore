@@ -6,6 +6,7 @@ __pycache__/
 
 # Build output
 .next/
+.next-*/
 dist/
 build/
 .turbo/
@@ -16,10 +17,13 @@ build/
 .env.local
 .logs/
 logs/
+*.log
+*.err.log
+*.out.log
 .tmp/
 uploads/
 storage/
-exports/
+/exports/
 
 # Test output
 test-results/

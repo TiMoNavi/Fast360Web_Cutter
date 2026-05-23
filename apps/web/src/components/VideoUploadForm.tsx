@@ -10,7 +10,7 @@ const MAX_HINT_BYTES = 2 * 1024 * 1024 * 1024;
 
 export function VideoUploadForm() {
   const router = useRouter();
-  const [message, setMessage] = useState<string>("选择一个 360 MP4 后上传。");
+  const [message, setMessage] = useState<string>("选择一个 360 视频文件后上传。");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
@@ -21,7 +21,7 @@ export function VideoUploadForm() {
       name.endsWith(suffix)
     );
     if (!allowed) {
-      return "请选择 MP4/MOV/M4V/WebM/MKV 视频文件。";
+      return "请选择 MP4、MOV、M4V、WebM 或 MKV 视频文件。";
     }
     if (file.size > MAX_HINT_BYTES) {
       return `当前 MVP 上传限制约为 ${formatBytes(MAX_HINT_BYTES)}。`;
@@ -67,12 +67,12 @@ export function VideoUploadForm() {
   return (
     <form className="upload-panel" onSubmit={onSubmit}>
       <label className="upload-dropzone">
-        <span>选择 360 视频文件</span>
+        <span>360 视频文件</span>
         <strong>{selectedFile ? selectedFile.name : "点击选择文件"}</strong>
         <small>
           {selectedFile
-            ? `${formatBytes(selectedFile.size)} · ${selectedFile.type || "未知类型"}`
-            : "支持 MP4/MOV/M4V/WebM/MKV，当前 MVP 使用普通表单上传。"}
+            ? `${formatBytes(selectedFile.size)} / ${selectedFile.type || "未知类型"}`
+            : "支持 MP4、MOV、M4V、WebM、MKV。"}
         </small>
         <input
           accept="video/*,.mp4,.mov,.m4v,.webm,.mkv"
@@ -81,7 +81,7 @@ export function VideoUploadForm() {
             const file = event.target.files?.[0] ?? null;
             setSelectedFile(file);
             setProgress(0);
-            setMessage(file ? validateFile(file) ?? "文件已选择，可以上传。" : "选择一个 360 MP4 后上传。");
+            setMessage(file ? validateFile(file) ?? "文件已选择，可以上传。" : "选择一个 360 视频文件后上传。");
           }}
           type="file"
         />

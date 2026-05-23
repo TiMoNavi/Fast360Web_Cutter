@@ -73,6 +73,14 @@ Backend 当前实现情况入口。
 03-shared-contracts/data-models.md
 核心数据模型与语义。
 
+03-shared-contracts/view-path-timeline-file.md
+ViewPathTimeline 文件契约：把 WebXR 散点和 patch 编译成可独立渲染、可回归测试的线性时间线文件。
+
+03-shared-contracts/effect-events.md
+效果事件协议与接入手册：自由事件名、黑场/转场示例、WebXR 调用方式和后端新增效果步骤。
+
+03-shared-contracts/audio-tracks.md
+音乐轨道协议：用户上传音乐列表、session 选择一首、从 output 0ms 对齐播放的简单混音模型。
 03-shared-contracts/api-contracts.md
 核心 API 合同。
 

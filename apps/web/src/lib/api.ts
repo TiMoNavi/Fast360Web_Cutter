@@ -1,10 +1,33 @@
-import type { ClipEditConfig, EffectEventsPatch, ViewPathPatch } from "./path-protocol";
+import type {
+  ClipEditConfig,
+  EffectEventsPatch,
+  PlaybackClientState,
+  SessionMusicConfig,
+  ViewPathPatch
+} from "./path-protocol";
 
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+function normalizeApiPath(path: string) {
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+function browserApiBaseUrl() {
+  return process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+}
 
 export function apiUrl(path: string) {
-  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  return `${browserApiBaseUrl()}${normalizeApiPath(path)}`;
+}
+
+function apiFetchUrl(path: string) {
+  const normalizedPath = normalizeApiPath(path);
+  if (typeof window !== "undefined") {
+    return apiUrl(normalizedPath);
+  }
+
+  return `${API_BASE_URL}${normalizedPath}`;
 }
 
 export type MinuteStatus =
@@ -27,9 +50,57 @@ export type VideoSummary = {
   height?: number | null;
   fps?: number | null;
   sourceUrl?: string;
+  thumbnailUrl?: string | null;
   createdAt?: string;
   updatedAt?: string;
   metadata?: Record<string, unknown>;
+};
+
+export type DemoVideoSummary = {
+  id: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  tags: string[];
+  difficulty: string;
+  sourceFilename: string;
+  projection: "equirectangular";
+  layout: "mono-2:1";
+  durationHintMs: number;
+  resolutionLabel: string;
+  attribution: string;
+  tutorialSteps: Array<{
+    title: string;
+    body: string;
+  }>;
+  sourceUrl: string;
+  thumbnailUrl?: string | null;
+};
+
+export type DemoStartResult = {
+  sampleId: string;
+  videoId: string;
+  sessionId: string;
+  mobileVideoPath: string;
+  xrPath: string;
+};
+
+export type MusicTrackSummary = {
+  id: string;
+  filename: string;
+  contentType?: string;
+  status: string;
+  sourceUrl?: string;
+  fileSize?: number;
+  durationMs?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type SessionMusicState = Required<Pick<SessionMusicConfig, "enabled" | "startMs" | "gainDb">> & {
+  musicId?: string | null;
+  music?: MusicTrackSummary | null;
 };
 
 export type VideoDetail = VideoSummary & {
@@ -51,6 +122,16 @@ export type VideoDetail = VideoSummary & {
     updated_at?: string;
   }) | null;
   [key: string]: unknown;
+};
+
+export type ThumbnailRequest = {
+  timeMs?: number | null;
+  yaw?: number;
+  pitch?: number;
+  hFov?: number;
+  vFov?: number;
+  width?: number;
+  height?: number;
 };
 
 export type CutSessionSummary = {
@@ -81,9 +162,18 @@ export type ExportStatus = {
   sessionId: string;
   status: string;
   downloadReady: boolean;
+  fileSize?: number | null;
   errorMessage?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ExportSummary = ExportStatus & {
+  videoId: string;
+  filename: string;
+  durationMs?: number | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 type RequestOptions = {
@@ -109,7 +199,7 @@ function requestHeaders(options?: RequestOptions): HeadersInit {
 }
 
 export async function apiGet<T>(path: string, options?: RequestOptions): Promise<T> {
-  const response = await fetch(apiUrl(path), {
+  const response = await fetch(apiFetchUrl(path), {
     cache: "no-store",
     credentials: "include",
     headers: requestHeaders(options)
@@ -118,8 +208,21 @@ export async function apiGet<T>(path: string, options?: RequestOptions): Promise
 }
 
 export async function apiPostJson<T>(path: string, payload: unknown): Promise<T> {
-  const response = await fetch(apiUrl(path), {
+  const response = await fetch(apiFetchUrl(path), {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    credentials: "include",
+    body: JSON.stringify(payload)
+  });
+
+  return parseJson<T>(response);
+}
+
+export async function apiPutJson<T>(path: string, payload: unknown): Promise<T> {
+  const response = await fetch(apiFetchUrl(path), {
+    method: "PUT",
     headers: {
       "Content-Type": "application/json"
     },
@@ -149,6 +252,18 @@ export async function getMe(options?: RequestOptions): Promise<AuthUser> {
 export async function listVideos(options?: RequestOptions): Promise<VideoSummary[]> {
   const data = await apiGet<{ videos: VideoSummary[] }>("/api/videos", options);
   return data.videos;
+}
+
+export async function listDemoVideos(): Promise<DemoVideoSummary[]> {
+  const data = await apiGet<{ videos: DemoVideoSummary[] }>("/api/demo-videos");
+  return data.videos;
+}
+
+export async function startDemoVideo(sampleId: string): Promise<DemoStartResult> {
+  return apiPostJson<DemoStartResult>(
+    `/api/demo-videos/${encodeURIComponent(sampleId)}/start`,
+    {}
+  );
 }
 
 export async function getVideo(videoId: string, options?: RequestOptions): Promise<VideoDetail> {
@@ -214,6 +329,54 @@ export async function uploadVideoWithProgress(
   });
 }
 
+export async function createVideoThumbnail(
+  videoId: string,
+  payload: ThumbnailRequest = {}
+): Promise<VideoDetail> {
+  return apiPostJson<VideoDetail>(
+    `/api/videos/${encodeURIComponent(videoId)}/thumbnail`,
+    payload
+  );
+}
+
+export async function listMusicTracks(options?: RequestOptions): Promise<MusicTrackSummary[]> {
+  const data = await apiGet<{ musicTracks: MusicTrackSummary[] }>("/api/music-tracks", options);
+  return data.musicTracks;
+}
+
+export async function uploadMusicTrack(file: File): Promise<MusicTrackSummary> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const response = await fetch(apiUrl("/api/music-tracks/upload"), {
+    method: "POST",
+    credentials: "include",
+    body: form
+  });
+
+  return parseJson<MusicTrackSummary>(response);
+}
+
+export async function getSessionMusic(
+  sessionId: string,
+  options?: RequestOptions
+): Promise<SessionMusicState> {
+  return apiGet<SessionMusicState>(
+    `/api/cut-sessions/${encodeURIComponent(sessionId)}/music`,
+    options
+  );
+}
+
+export async function updateSessionMusic(
+  sessionId: string,
+  config: SessionMusicConfig
+): Promise<SessionMusicState> {
+  return apiPutJson<SessionMusicState>(
+    `/api/cut-sessions/${encodeURIComponent(sessionId)}/music`,
+    config
+  );
+}
+
 export function defaultClipEditConfig(videoId: string, sessionId: string): ClipEditConfig {
   return {
     version: 1,
@@ -260,6 +423,16 @@ export async function sendEffectEventsPatch(
   );
 }
 
+export async function sendPlaybackClientState(
+  sessionId: string,
+  state: PlaybackClientState
+): Promise<Record<string, unknown>> {
+  return apiPostJson<Record<string, unknown>>(
+    `/api/cut-sessions/${encodeURIComponent(sessionId)}/playback-state`,
+    state
+  );
+}
+
 export async function renderTest(sessionId: string): Promise<Record<string, unknown>> {
   return apiPostJson<Record<string, unknown>>(
     `/api/cut-sessions/${encodeURIComponent(sessionId)}/render-test`,
@@ -291,4 +464,9 @@ export async function getExportStatus(
   options?: RequestOptions
 ): Promise<ExportStatus> {
   return apiGet<ExportStatus>(`/api/exports/${encodeURIComponent(exportId)}`, options);
+}
+
+export async function listExports(options?: RequestOptions): Promise<ExportSummary[]> {
+  const data = await apiGet<{ exports: ExportSummary[] }>("/api/exports", options);
+  return data.exports;
 }

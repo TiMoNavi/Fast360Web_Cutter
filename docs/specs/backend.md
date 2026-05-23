@@ -273,10 +273,16 @@ POST /api/cut-sessions/:sessionId/effect-events
 当前支持的效果事件：
 
 ```text
-fadeBlack
-fadeOutBlack
-fadeInBlack
 highlight
+black.solid
+transition.fade_black
+transition.flash_white
+filter.color_grade
+filter.blur
+filter.vignette
+filter.chromatic_aberration
+overlay.letterbox
+overlay.text
 ```
 
 当前已实现：

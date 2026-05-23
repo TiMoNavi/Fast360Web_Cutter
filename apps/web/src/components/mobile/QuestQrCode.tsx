@@ -39,7 +39,7 @@ export function QuestQrCode({ value }: QuestQrCodeProps) {
 
   return (
     <div className="qr-card">
-      {src ? <img alt="Quest WebXR 入口二维码" src={src} /> : <span>生成二维码中</span>}
+      {src ? <img alt="Quest WebXR entry QR code" src={src} /> : <span>Generating QR code</span>}
     </div>
   );
 }

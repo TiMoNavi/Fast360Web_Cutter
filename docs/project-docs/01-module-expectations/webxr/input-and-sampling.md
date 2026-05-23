@@ -49,6 +49,8 @@ createEffectEvent
 requestExport
 ```
 
+`createEffectEvent` 不直接生成视频，也不直接修改取景点。它应生成 `EffectEventsPatch`，由后端保存到独立效果时间线，再由 timeline assembler 编译进 `ViewPathTimeline.effectTracks`。
+
 ## Controller 映射
 
 第一版默认映射：
@@ -119,6 +121,58 @@ cut、放弃、恢复、锁定切换、FOV 明显变化、保存。
 ```
 
 上传时使用 `ViewPathPatch.replaceRange`，支持用户重放某段并覆盖旧路径。
+
+## 效果事件上传
+
+WebXR 端触发黑场、转场、字幕、滤镜、人工标记等剪辑效果时，应走独立效果协议：
+
+```text
+POST /api/cut-sessions/:sessionId/effect-events
+```
+
+示例：
+
+```json
+{
+  "version": 1,
+  "videoId": "video_123",
+  "sessionId": "session_456",
+  "effectRevision": 7,
+  "replaceRange": {
+    "startMs": 10000,
+    "endMs": 11200,
+    "reason": "effect"
+  },
+  "events": [
+    {
+      "seq": 1,
+      "type": "black.solid",
+      "displayName": "黑场",
+      "startMs": 10000,
+      "endMs": 11200,
+      "enabled": true,
+      "params": {
+        "color": "#000000",
+        "opacity": 1.0
+      },
+      "renderPolicy": {
+        "fallback": "warn",
+        "requires": []
+      }
+    }
+  ]
+}
+```
+
+WebXR 端应使用 `video.currentTime * 1000` 生成 `startMs / endMs`。如果效果是瞬时动作，可以给一个默认持续时间；如果效果是范围动作，应让用户在空间 UI 中确认范围。
+
+效果事件不要混入 `ViewPathPoint`。取景路径表达“看哪里、是否保留、是否切开”；效果事件表达“这段时间额外做什么视觉处理或标记”。
+
+完整效果事件接入手册见：
+
+```text
+docs/project-docs/03-shared-contracts/effect-events.md
+```
 
 ## 不持久化的状态
 

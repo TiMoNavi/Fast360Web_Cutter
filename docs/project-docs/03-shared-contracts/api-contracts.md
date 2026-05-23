@@ -121,9 +121,90 @@ POST /api/cut-sessions/:sessionId/effect-events
 目标语义：
 
 ```text
-除了固定 eventName，后续还应支持用户自定义名称或标签。
+除了当前固定 eventName，后续还应支持自由事件名或标签。
 用户可以标记 startMs 到 endMs 的时间范围。
 事件可以先作为后处理标记保存，不要求立即参与 render-test。
+eventName / type 应是机器可读字符串，例如 black.solid、transition.fade_black、overlay.text。
+displayName 或 params.label 可保存中文展示名。
+未知事件名应按 renderPolicy.fallback = ignore / warn / fail 处理。
+```
+
+示例：
+
+```json
+{
+  "version": 1,
+  "videoId": "video_123",
+  "sessionId": "session_456",
+  "effectRevision": 7,
+  "replaceRange": {
+    "startMs": 10000,
+    "endMs": 11200,
+    "reason": "effect"
+  },
+  "events": [
+    {
+      "seq": 1,
+      "type": "black.solid",
+      "displayName": "黑场",
+      "startMs": 10000,
+      "endMs": 11200,
+      "enabled": true,
+      "params": {
+        "color": "#000000",
+        "opacity": 1.0
+      },
+      "renderPolicy": {
+        "fallback": "warn",
+        "requires": []
+      }
+    }
+  ]
+}
+```
+
+完整效果接入说明见：
+
+```text
+03-shared-contracts/effect-events.md
+```
+
+## MusicTracks / SessionMusic
+
+```text
+GET  /api/music-tracks
+POST /api/music-tracks/upload
+GET  /api/music-tracks/:musicId/download
+
+GET  /api/cut-sessions/:sessionId/music
+PUT  /api/cut-sessions/:sessionId/music
+```
+
+第一版音乐控制：
+
+```text
+用户上传音乐文件到 music_tracks。
+session_music 只选择一首 musicId。
+startMs 只支持 0。
+render-test 导出时把音乐从成片开头混入。
+音乐长于成片时裁掉，短于成片时补静音。
+```
+
+Session 音乐配置：
+
+```json
+{
+  "musicId": "music_123",
+  "enabled": true,
+  "startMs": 0,
+  "gainDb": -10.0
+}
+```
+
+详细协议见：
+
+```text
+03-shared-contracts/audio-tracks.md
 ```
 
 ## PlaybackClientState

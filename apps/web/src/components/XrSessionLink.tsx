@@ -16,13 +16,13 @@ export function XrSessionLink({ videoId }: XrSessionLinkProps) {
   return (
     <div className="inline-controls">
       <input
-        aria-label={`${videoId} session id`}
+        aria-label={`${videoId} 的 sessionId`}
         onChange={(event) => setSessionId(event.target.value)}
         type="text"
         value={sessionId}
       />
       <a className="button primary" href={href}>
-        进入
+        进入 WebXR
       </a>
     </div>
   );

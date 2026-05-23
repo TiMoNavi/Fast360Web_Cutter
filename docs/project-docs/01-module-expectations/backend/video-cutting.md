@@ -8,13 +8,16 @@
 
 ```text
 读取源 360 视频。
-读取 ViewPathPoint 时间线。
-读取 EffectEvent 时间线。
+读取 ViewPathTimeline。
+读取 ViewPathPoint 取景轨。
+读取 EffectEvent 效果轨。
 判断 minute segment 是否 ready。
 创建渲染任务。
 调度 worker。
 执行 equirectangular -> flat remap。
 处理 enabled=false 区间。
+处理 editSegments 的 sourceMs -> outputMs 映射。
+处理快进、慢放、倒放、跳过和重复片段。
 处理 cut=true 边界。
 应用可渲染的效果事件。
 写入 segment。
@@ -29,8 +32,10 @@ dirty 分片重渲染。
 
 ```text
 chunkSeconds = 60
-minuteIndex = floor(tMs / 60000)
+minuteIndex = floor(outputMs / 60000)
 ```
+
+分片应基于最终成片时间 `outputMs`，再通过 `ViewPathTimeline.editSegments` 找到对应的源视频区间。一个 output 分片可能跨多个 source segment，因此 video cutting 应先向 timeline assembler 请求更小的 `RenderSlice[]`。
 
 目标状态：
 
@@ -51,11 +56,21 @@ discarded
 ```text
 sourcePath
 targetPath
-durationMs
-sourceStartMs
 fps
 outputWidth
 outputHeight
+RenderSlice[]
+```
+
+`RenderSlice` 至少包含：
+
+```text
+outputStartMs
+outputEndMs
+sourceStartMs
+sourceEndMs
+direction
+speed
 RenderPathPoint[]
 EffectEvent[]
 ```
@@ -88,5 +103,6 @@ segment MP4。
 接收 UploadFile。
 解析 WebXR 页面状态。
 修改 ViewPathPatch 原始语义。
+把散点 patch 临时拼接成 timeline。
 决定某个 video 是否属于某个用户。
 ```

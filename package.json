@@ -25,5 +25,8 @@
     "sample:stream": "node scripts/prepare-sample-stream.mjs",
     "dev:api": "python -m uvicorn app.main:app --reload --app-dir apps/api",
     "check:api": "python -m compileall apps/api"
+  },
+  "dependencies": {
+    "motion": "^10.18.0"
   }
 }

@@ -6,6 +6,7 @@ import { MobileShell } from "@/components/mobile/MobileShell";
 import { QuestQrCode } from "@/components/mobile/QuestQrCode";
 import { SessionActions } from "@/components/mobile/SessionActions";
 import { StatusBadge } from "@/components/mobile/StatusBadge";
+import { Video360Preview } from "@/components/mobile/Video360Preview";
 import {
   formatBytes,
   formatDate,
@@ -40,6 +41,21 @@ function metricItems(video: VideoDetail) {
   ];
 }
 
+function metadataRows(video: VideoDetail) {
+  const metadata = video.metadata ?? {};
+  return [
+    ["Video ID", video.id],
+    ["Source URL", video.sourceUrl ?? "-"],
+    ["Thumbnail", video.thumbnailUrl ?? "-"],
+    ["Duration", `${video.durationMs ?? 0} ms`],
+    ["Dimensions", video.width && video.height ? `${video.width} x ${video.height}` : "-"],
+    ["FPS", video.fps ? String(video.fps) : "-"],
+    ["Probe Source", typeof metadata.source === "string" ? metadata.source : "-"],
+    ["Created", video.createdAt ?? "-"],
+    ["Updated", video.updatedAt ?? "-"]
+  ];
+}
+
 export default async function MobileVideoDetailPage({ params }: PageProps) {
   const { videoId } = await params;
   let video: VideoDetail | null = null;
@@ -69,10 +85,8 @@ export default async function MobileVideoDetailPage({ params }: PageProps) {
 
   const latestSessionId = video?.latestSession?.id ?? null;
   const latestSessionStatus = sessionStatus?.sessionStatus ?? video?.latestSession?.status ?? null;
-  const xrPath = latestSessionId
-    ? `/xr/videos/${encodeURIComponent(videoId)}/session/${encodeURIComponent(latestSessionId)}`
-    : null;
-  const xrUrl = xrPath ? `${getPublicOrigin(requestHeaders)}${xrPath}` : null;
+  const xrPath = "/xr/player";
+  const xrUrl = `${getPublicOrigin(requestHeaders)}${xrPath}`;
   const latestExportId =
     sessionStatus?.exportId ??
     video?.latestExport?.exportId ??
@@ -80,153 +94,154 @@ export default async function MobileVideoDetailPage({ params }: PageProps) {
     null;
   const latestExportStatus = video?.latestExport?.status ?? (sessionStatus?.downloadReady ? "ready" : null);
   const latestExportError = video?.latestExport?.errorMessage ?? video?.latestExport?.error_message ?? null;
+  const exportDownloadReady = Boolean(sessionStatus?.downloadReady || video?.latestExport?.status === "ready");
+  const previewSourceUrl = video
+    ? apiUrl(video.sourceUrl ?? `/api/videos/${encodeURIComponent(video.id)}/download`)
+    : "";
+  const posterUrl = video?.thumbnailUrl ? apiUrl(video.thumbnailUrl) : null;
 
   return (
-    <MobileShell email={email} title="视频详情">
-      {error ? <p className="error-text">{error}</p> : null}
+    <MobileShell
+      contentClassName="mobile-content-vapor-wide"
+      email={email}
+      eyebrow="360 Stream Detail"
+      title="视频详情"
+      variant="vapor"
+    >
+      <div className="vapor-library-page vapor-detail-page">
+        {error ? <p className="error-text">{error}</p> : null}
 
-      {video ? (
-        <>
-          <section className="mobile-card">
-            <div className="detail-heading">
-              <div>
-                <p className="eyebrow">Video</p>
-                <h2>{video.filename || video.id}</h2>
-                <p>{video.id}</p>
-              </div>
-              <StatusBadge status={video.status} />
-            </div>
-
-            <dl className="metric-grid large">
-              {metricItems(video).map(([label, value]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
+        {video ? (
+          <>
+            <section className="vapor-detail-hero">
+              <div className="vapor-window-titlebar">
+                <div className="vapor-window-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
                 </div>
-              ))}
-            </dl>
-          </section>
-
-          <section className="mobile-card">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Quest Entry</p>
-                <h2>WebXR 入口</h2>
+                <p>&gt; OPEN_360_SOURCE_STREAM</p>
               </div>
-              {latestSessionStatus ? <StatusBadge status={latestSessionStatus} /> : null}
-            </div>
-
-            {xrUrl && xrPath ? (
-              <div className="xr-entry-grid">
-                <QuestQrCode value={xrUrl} />
-                <div className="stack">
-                  <div className="link-box">{xrUrl}</div>
-                  <div className="button-row">
-                    <CopyLinkButton value={xrUrl} />
-                    <Link className="button primary" href={xrPath}>
-                      打开 WebXR
+              <div className="vapor-detail-player-grid">
+                <Video360Preview
+                  posterUrl={posterUrl}
+                  sourceUrl={previewSourceUrl}
+                  title={video.filename || video.id}
+                />
+                <aside className="vapor-detail-summary">
+                  <p className="vapor-command">&gt; source</p>
+                  <h2>{video.filename || video.id}</h2>
+                  <p>{video.id}</p>
+                  <StatusBadge status={video.status} />
+                  <dl className="vapor-detail-metrics">
+                    {metricItems(video).map(([label, value]) => (
+                      <div key={label}>
+                        <dt>{label}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <div className="vapor-card-actions">
+                    <a
+                      className="vapor-button vapor-button-primary"
+                      href={apiUrl(`/api/videos/${encodeURIComponent(video.id)}/download`)}
+                    >
+                      <span>下载源视频</span>
+                    </a>
+                    <Link className="vapor-button vapor-button-ghost" href="/mobile/videos">
+                      <span>返回列表</span>
                     </Link>
                   </div>
+                </aside>
+              </div>
+            </section>
+
+            <section className="vapor-library-section">
+              <div className="vapor-section-heading">
+                <div>
+                  <p className="vapor-command">&gt; metadata</p>
+                  <h2>视频元数据</h2>
                 </div>
               </div>
-            ) : (
-              <div className="empty-state compact">
-                <strong>还没有 session</strong>
-                <p>创建入口后，这里会生成 Quest 可扫码打开的二维码。</p>
+              <dl className="vapor-metadata-table">
+                {metadataRows(video).map(([label, value]) => (
+                  <div key={label}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+
+            <section className="vapor-library-section">
+              <div className="vapor-section-heading">
+                <div>
+                  <p className="vapor-command">&gt; quest entry</p>
+                  <h2>WebXR 入口</h2>
+                </div>
+                {latestSessionStatus ? <StatusBadge status={latestSessionStatus} /> : null}
               </div>
-            )}
 
-            <SessionActions currentSessionId={latestSessionId} videoId={video.id} />
-          </section>
-
-          <section className="mobile-card">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Progress</p>
-                <h2>裁剪状态</h2>
-              </div>
-              {sessionStatus ? <StatusBadge status={sessionStatus.sessionStatus} /> : null}
-            </div>
-
-            {sessionStatus ? (
-              <>
-                <div className="dashboard-strip compact">
-                  <div>
-                    <span>{sessionStatus.completedCount}</span>
-                    <p>完成</p>
-                  </div>
-                  <div>
-                    <span>{sessionStatus.dirtyCount}</span>
-                    <p>待重渲染</p>
-                  </div>
-                  <div>
-                    <span>{sessionStatus.failedCount}</span>
-                    <p>失败</p>
-                  </div>
-                  <div>
-                    <span>{sessionStatus.discardedCount}</span>
-                    <p>丢弃</p>
+              {xrUrl && xrPath ? (
+                <div className="vapor-xr-entry-grid">
+                  <QuestQrCode value={xrUrl} />
+                  <div className="stack">
+                    <div className="vapor-link-box">{xrUrl}</div>
+                    <div className="vapor-card-actions">
+                      <CopyLinkButton value={xrUrl} />
+                      <Link className="vapor-button vapor-button-primary" href={xrPath}>
+                        <span>打开 WebXR</span>
+                      </Link>
+                    </div>
                   </div>
                 </div>
-
-                {sessionStatus.minuteStatuses.length > 0 ? (
-                  <div className="minute-list">
-                    {sessionStatus.minuteStatuses.map((minute) => {
-                      const index = Number(minute.minuteIndex ?? 0);
-                      const status = String(minute.status ?? "collecting");
-                      return (
-                        <div className="minute-row" key={`${index}-${status}`}>
-                          <span>第 {index + 1} 分钟</span>
-                          <StatusBadge status={status} />
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="muted">还没有分钟级裁剪状态。进入 WebXR 并提交路径后会更新。</p>
-                )}
-              </>
-            ) : (
-              <p className="muted">还没有裁剪 session。</p>
-            )}
-          </section>
-
-          <section className="mobile-card">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Export</p>
-                <h2>导出结果</h2>
-              </div>
-              {latestExportStatus ? <StatusBadge status={latestExportStatus} /> : null}
-            </div>
-
-            {latestExportId ? (
-              <div className="export-summary">
-                <p>
-                  当前导出：<strong>{latestExportId}</strong>
-                </p>
-                <p className="muted">状态：{statusLabel(latestExportStatus)}</p>
-                {latestExportError ? <p className="error-text">{latestExportError}</p> : null}
-                <div className="button-row">
-                  <Link className="button" href={`/mobile/exports/${encodeURIComponent(latestExportId)}`}>
-                    查看导出
-                  </Link>
-                  {sessionStatus?.downloadReady ? (
-                    <a
-                      className="button primary"
-                      href={apiUrl(`/api/exports/${encodeURIComponent(latestExportId)}/download`)}
-                    >
-                      下载 MP4
-                    </a>
-                  ) : null}
+              ) : (
+                <div className="vapor-empty-state">
+                  <strong>&gt; 还没有 session</strong>
+                  <p>创建入口后，这里会出现 Quest 可扫码打开的二维码。</p>
                 </div>
+              )}
+
+              <SessionActions currentSessionId={latestSessionId} videoId={video.id} />
+            </section>
+
+            <section className="vapor-library-section">
+              <div className="vapor-section-heading">
+                <div>
+                  <p className="vapor-command">&gt; export</p>
+                  <h2>导出结果</h2>
+                </div>
+                {latestExportStatus ? <StatusBadge status={latestExportStatus} /> : null}
               </div>
-            ) : (
-              <p className="muted">暂无导出结果。WebXR 测试处理完成后会出现下载入口。</p>
-            )}
-          </section>
-        </>
-      ) : null}
+
+              {latestExportId ? (
+                <div className="vapor-export-panel">
+                  <p>
+                    当前导出：<strong>{latestExportId}</strong>
+                  </p>
+                  <p>状态：{statusLabel(latestExportStatus)}</p>
+                  {latestExportError ? <p className="error-text">{latestExportError}</p> : null}
+                  <div className="vapor-card-actions">
+                    <Link className="vapor-button vapor-button-ghost" href={`/mobile/exports/${encodeURIComponent(latestExportId)}`}>
+                      <span>查看导出</span>
+                    </Link>
+                    {exportDownloadReady ? (
+                      <a
+                        className="vapor-button vapor-button-primary"
+                        href={apiUrl(`/api/exports/${encodeURIComponent(latestExportId)}/download`)}
+                      >
+                        <span>下载裁剪 MP4</span>
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <p className="muted">暂无导出结果。WebXR 测试处理完成后会出现下载入口。</p>
+              )}
+            </section>
+          </>
+        ) : null}
+      </div>
     </MobileShell>
   );
 }

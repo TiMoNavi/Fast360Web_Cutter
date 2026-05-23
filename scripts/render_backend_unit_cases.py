@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,13 @@ TMP_DIR = ROOT / "storage" / "tmp" / "unit-cases"
 FPS = 30
 DURATION_MS = 6000
 FOV_H = 90.0
-FOV_V = 50.625
+
+
+def vertical_fov_from_horizontal(horizontal_fov: float, aspect_ratio: float = 16 / 9) -> float:
+    return round(math.degrees(2 * math.atan(math.tan(math.radians(horizontal_fov) / 2) / aspect_ratio)), 2)
+
+
+FOV_V = vertical_fov_from_horizontal(FOV_H)
 
 
 def point(
@@ -63,9 +70,9 @@ CASES: dict[str, list[dict[str, float | bool | str]]] = {
         point(DURATION_MS, 30, 30),
     ],
     "04_fov_zoom_in_out": [
-        point(0, 0, 0, 100, 56.25),
+        point(0, 0, 0, 100, vertical_fov_from_horizontal(100)),
         point(3000, 0, 0, 55, 30.9375),
-        point(DURATION_MS, 0, 0, 100, 56.25),
+        point(DURATION_MS, 0, 0, 100, vertical_fov_from_horizontal(100)),
     ],
     "05_skip_2s_4s_no_black": [
         point(0, 0, 0),
@@ -90,7 +97,7 @@ CASES: dict[str, list[dict[str, float | bool | str]]] = {
 EFFECT_CASES: dict[str, list[dict[str, object]]] = {
     "07_effect_fade_black_highlight": [
         {
-            "event_name": "fadeBlack",
+            "event_name": "transition.fade_black",
             "start_ms": 1500,
             "end_ms": 2500,
             "params": {"peakOpacity": 0.9},

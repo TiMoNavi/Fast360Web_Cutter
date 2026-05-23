@@ -47,20 +47,46 @@ export type ViewPathPatch = {
   points: ViewPathPoint[];
 };
 
-export type EffectEventName =
-  | "fadeBlack"
-  | "fadeOutBlack"
-  | "fadeInBlack"
-  | "highlight";
+export type BuiltInEffectEventName =
+  | "highlight"
+  | "black.solid"
+  | "transition.fade_black"
+  | "transition.flash_white"
+  | "filter.blur"
+  | "filter.color_grade"
+  | "filter.chromatic_aberration"
+  | "filter.vignette"
+  | "overlay.letterbox"
+  | "overlay.text";
 
-export type EffectEvent = {
+export type EffectEventName = BuiltInEffectEventName | (string & {});
+
+export type EffectRenderPolicy = {
+  fallback?: "ignore" | "warn" | "fail";
+  requires?: string[];
+  priority?: number;
+  conflictGroup?: string;
+};
+
+export type EffectEventBase = {
   seq: number;
-  eventName: EffectEventName;
+  displayName?: string;
   startMs: number;
   endMs: number;
   params?: Record<string, unknown>;
   enabled?: boolean;
+  renderPolicy?: EffectRenderPolicy;
 };
+
+export type EffectEvent =
+  | (EffectEventBase & {
+      eventName: EffectEventName;
+      type?: EffectEventName;
+    })
+  | (EffectEventBase & {
+      eventName?: EffectEventName;
+      type: EffectEventName;
+    });
 
 export type EffectEventsPatch = {
   version: 1;
@@ -73,6 +99,13 @@ export type EffectEventsPatch = {
     reason: "effect";
   };
   events: EffectEvent[];
+};
+
+export type SessionMusicConfig = {
+  musicId?: string | null;
+  enabled?: boolean;
+  startMs?: 0;
+  gainDb?: number;
 };
 
 export type PlaybackClientState = {
@@ -91,5 +124,6 @@ export type PlaybackClientState = {
   recording: {
     samplingPaused: boolean;
     discardMode: boolean;
+    recordingRate?: number;
   };
 };
