@@ -1,7 +1,7 @@
 import { getVideo, listVideos } from "@/lib/api";
 import type { VideoDetail, VideoSummary } from "@/lib/api";
 import type { AFrame360VideoSource } from "../controls/types";
-import { videoToSource, uniqueSources } from "./videoSources";
+import { isLikelyEquirectangularSource, videoToSource, uniqueSources } from "./videoSources";
 
 export type PcEditorSessionModel = {
   currentSource: AFrame360VideoSource;
@@ -16,7 +16,10 @@ export type PcEditorLibraryModel = {
 export async function buildPcEditorLibraryModel(cookieHeader: string): Promise<PcEditorLibraryModel> {
   const videos = await listVideos({ cookie: cookieHeader });
   const playlistSources = uniqueSources(
-    videos.map((item: VideoSummary) => videoToSource(item)).filter((source): source is AFrame360VideoSource => Boolean(source))
+    videos
+      .filter(isLikelyEquirectangularSource)
+      .map((item: VideoSummary) => videoToSource(item))
+      .filter((source): source is AFrame360VideoSource => Boolean(source))
   );
 
   return {
@@ -36,7 +39,10 @@ export async function buildPcEditorSessionModel(videoId: string, cookieHeader: s
   }
 
   const playlistSources = uniqueSources([
-    ...videos.map((item: VideoSummary) => videoToSource(item)).filter((source): source is AFrame360VideoSource => Boolean(source)),
+    ...videos
+      .filter(isLikelyEquirectangularSource)
+      .map((item: VideoSummary) => videoToSource(item))
+      .filter((source): source is AFrame360VideoSource => Boolean(source)),
     currentSource
   ]);
 

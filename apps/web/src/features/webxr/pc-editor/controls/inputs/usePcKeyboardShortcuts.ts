@@ -12,6 +12,9 @@ import { isEditableTarget } from "./domTargetGuards";
 
 const KEYBOARD_MASK_SPEED_DEG_PER_SECOND = 42;
 const KEYBOARD_MASK_FOV_SPEED_DEG_PER_SECOND = 48;
+const KEYBOARD_MASK_ACCEL_RESPONSE_SECONDS = 0.085;
+const KEYBOARD_MASK_DECEL_RESPONSE_SECONDS = 0.18;
+const KEYBOARD_MASK_STOP_EPSILON_DEG_PER_SECOND = 0.04;
 const DISCARD_HOLD_THRESHOLD_MS = 400;
 
 export type PcDiscardRange = {
@@ -46,6 +49,16 @@ function formatDiscardTime(ms: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function approachValue(current: number, target: number, deltaSeconds: number, responseSeconds: number) {
+  const alpha = 1 - Math.exp(-deltaSeconds / responseSeconds);
+  return current + (target - current) * alpha;
+}
+
+function consumeKeyboardEvent(event: KeyboardEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 export function usePcKeyboardShortcuts({
   cropMaskState,
   mask,
@@ -75,6 +88,11 @@ export function usePcKeyboardShortcuts({
   const latestFovRef = useRef(cropMaskState.fov.h);
   const latestPlaybackStateRef = useRef(playbackState);
   const maskRef = useRef(mask);
+  const motionRef = useRef({
+    fovVelocity: 0,
+    pitchVelocity: 0,
+    yawVelocity: 0
+  });
   const onDiscardNoticeRef = useRef(onDiscardNotice);
   const playbackRef = useRef(playback);
   const timelineRef = useRef(timeline);
@@ -100,6 +118,13 @@ export function usePcKeyboardShortcuts({
       }
       lastFrameTimeRef.current = null;
     };
+    const clearMotion = () => {
+      motionRef.current = {
+        fovVelocity: 0,
+        pitchVelocity: 0,
+        yawVelocity: 0
+      };
+    };
 
     const tick = (time: number) => {
       const held = heldKeysRef.current;
@@ -107,28 +132,46 @@ export function usePcKeyboardShortcuts({
       const pitchAxis = (held.has("keyw") ? 1 : 0) - (held.has("keys") ? 1 : 0);
       const fovAxis = (held.has("keye") ? 1 : 0) - (held.has("keyq") ? 1 : 0);
 
-      if (!yawAxis && !pitchAxis && !fovAxis) {
+      const last = lastFrameTimeRef.current ?? time;
+      const deltaSeconds = Math.min(0.05, Math.max(0, (time - last) / 1000));
+      lastFrameTimeRef.current = time;
+      const length = Math.hypot(yawAxis, pitchAxis) || 1;
+      const targetYawVelocity = yawAxis ? (yawAxis / length) * KEYBOARD_MASK_SPEED_DEG_PER_SECOND : 0;
+      const targetPitchVelocity = pitchAxis ? (pitchAxis / length) * KEYBOARD_MASK_SPEED_DEG_PER_SECOND : 0;
+      const targetFovVelocity = fovAxis * KEYBOARD_MASK_FOV_SPEED_DEG_PER_SECOND;
+      const response =
+        targetYawVelocity || targetPitchVelocity || targetFovVelocity
+          ? KEYBOARD_MASK_ACCEL_RESPONSE_SECONDS
+          : KEYBOARD_MASK_DECEL_RESPONSE_SECONDS;
+      const motion = motionRef.current;
+
+      motion.yawVelocity = approachValue(motion.yawVelocity, targetYawVelocity, deltaSeconds, response);
+      motion.pitchVelocity = approachValue(motion.pitchVelocity, targetPitchVelocity, deltaSeconds, response);
+      motion.fovVelocity = approachValue(motion.fovVelocity, targetFovVelocity, deltaSeconds, response);
+
+      const maskMoving =
+        Math.abs(motion.yawVelocity) > KEYBOARD_MASK_STOP_EPSILON_DEG_PER_SECOND ||
+        Math.abs(motion.pitchVelocity) > KEYBOARD_MASK_STOP_EPSILON_DEG_PER_SECOND;
+      const fovMoving = Math.abs(motion.fovVelocity) > KEYBOARD_MASK_STOP_EPSILON_DEG_PER_SECOND;
+
+      if (!yawAxis && !pitchAxis && !fovAxis && !maskMoving && !fovMoving) {
+        clearMotion();
         stopLoop();
         return;
       }
 
-      const last = lastFrameTimeRef.current ?? time;
-      const deltaSeconds = Math.min(0.05, Math.max(0, (time - last) / 1000));
-      lastFrameTimeRef.current = time;
-      if (yawAxis || pitchAxis) {
-        const length = Math.hypot(yawAxis, pitchAxis) || 1;
-        const speed = KEYBOARD_MASK_SPEED_DEG_PER_SECOND;
+      if (maskMoving) {
         const nextCenter = normalizeViewCenter({
-          pitch: latestCenterRef.current.pitch + (pitchAxis / length) * speed * deltaSeconds,
-          yaw: latestCenterRef.current.yaw + (yawAxis / length) * speed * deltaSeconds
+          pitch: latestCenterRef.current.pitch + motion.pitchVelocity * deltaSeconds,
+          yaw: latestCenterRef.current.yaw + motion.yawVelocity * deltaSeconds
         });
 
         latestCenterRef.current = nextCenter;
         maskRef.current.setPreviewCenter(nextCenter);
       }
 
-      if (fovAxis) {
-        latestFovRef.current += fovAxis * KEYBOARD_MASK_FOV_SPEED_DEG_PER_SECOND * deltaSeconds;
+      if (fovMoving) {
+        latestFovRef.current += motion.fovVelocity * deltaSeconds;
         maskRef.current.setPreviewFov(latestFovRef.current, 0);
       }
       frameRef.current = window.requestAnimationFrame(tick);
@@ -258,78 +301,86 @@ export function usePcKeyboardShortcuts({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const code = event.code.toLowerCase();
+
+      const isSystemKey = event.key === "F5" || event.key === "F12" || (event.ctrlKey && key === "r");
+      if (isSystemKey) {
+        return;
+      }
+
+      if (key === " " || code === "space") {
+        playbackRef.current.togglePlay();
+        consumeKeyboardEvent(event);
+        return;
+      }
+
       if (isEditableTarget(event.target)) {
         return;
       }
 
-      const key = event.key.toLowerCase();
-      const code = event.code.toLowerCase();
-
       if (key === "delete" || code === "delete") {
         beginDiscardHold();
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (key === "t" || code === "keyt") {
         setWheelTarget("playback");
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (key === "r" || code === "keyr") {
         setWheelTarget("recording");
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (key === "h" || code === "keyh") {
         setWheelTarget("mask-opacity");
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (["keyw", "keya", "keys", "keyd", "keyq", "keye"].includes(code)) {
         heldKeysRef.current.add(code);
         ensureLoop();
-        event.preventDefault();
-        return;
-      }
-
-      if (key === " " || code === "space") {
-        playbackRef.current.togglePlay();
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (key === "," || key === "<" || code === "comma" || code === "bracketleft") {
         playbackRef.current.setPlaybackRateByOffset(-1);
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (key === "." || key === ">" || code === "period" || code === "bracketright") {
         playbackRef.current.setPlaybackRateByOffset(1);
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (key === "p" || code === "keyp") {
         playbackRef.current.toggleDomPlaylist();
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (key === "f" || code === "keyf") {
         timelineRef.current.flushTimeline("live");
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (key === "c" || code === "keyc") {
         timelineRef.current.cutHere();
-        event.preventDefault();
+        consumeKeyboardEvent(event);
+        return;
       }
+
+      event.preventDefault();
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -338,21 +389,19 @@ export function usePcKeyboardShortcuts({
 
       if (key === "delete" || code === "delete") {
         finishDiscardHold("release");
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (code === "keyt" || code === "keyr" || code === "keyh") {
         setWheelTarget(null);
-        event.preventDefault();
+        consumeKeyboardEvent(event);
         return;
       }
 
       if (heldKeysRef.current.delete(code)) {
-        if (!heldKeysRef.current.size) {
-          stopLoop();
-        }
-        event.preventDefault();
+        ensureLoop();
+        consumeKeyboardEvent(event);
       }
     };
 
@@ -360,6 +409,7 @@ export function usePcKeyboardShortcuts({
       heldKeysRef.current.clear();
       setWheelTarget(null);
       finishDiscardHold("cancel");
+      clearMotion();
       stopLoop();
     };
 

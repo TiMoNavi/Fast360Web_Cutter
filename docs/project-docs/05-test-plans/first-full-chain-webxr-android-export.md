@@ -1,7 +1,7 @@
 # 第一次全链路 E2E 测试计划：导入 -> WebXR 真剪辑 -> 导出 -> Android 下载/分享
 
 日期：2026-05-24  
-目标账号：`madjad020@gmail.com`  
+目标账号：`[redacted test account]`
 测试口径：先写计划，下一步再按本文执行。
 
 ## 目标
@@ -84,6 +84,15 @@ $env:NEXT_PUBLIC_API_BASE_URL=""
 npm --workspace apps/web run dev:https -- --hostname 0.0.0.0 --port 3001
 ```
 
+大文件上传注意：
+
+```text
+Next.js 的 /api rewrite 在 dev/test 环境里会经过请求体克隆，默认 10MB 上限会导致 4K 360 视频上传失败。
+apps/web/next.config.mjs 已把 experimental.middlewareClientMaxBodySize 默认提高到 2gb。
+如果还需要临时调整，可设置 NEXT_MIDDLEWARE_CLIENT_MAX_BODY_SIZE，例如 4gb。
+如果只跑自动化链路，也可以设置 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:<API_PORT> 让浏览器直连 FastAPI 上传接口。
+```
+
 访问地址按本机局域网 IP 替换：
 
 ```text
@@ -122,7 +131,7 @@ storage/e2e-artifacts/2026-05-24-first-full-chain/
 ### 1. 登录
 
 1. 打开 `/mobile/login`。
-2. 使用 `madjad020@gmail.com / yanbaojie00000` 登录。
+2. 使用本地测试账号登录。
 3. 截图记录登录后的素材库页面。
 
 通过标准：
@@ -273,6 +282,22 @@ Android 系统分享面板出现。
 
 ```powershell
 adb shell screenrecord /sdcard/webxr-e2e-android-download-share.mp4
+```
+
+如果 `adb` 不在 PATH，自动化脚本会按以下顺序查找：
+
+```text
+E2E_ADB
+PATH 中的 adb
+ANDROID_HOME/platform-tools/adb(.exe)
+ANDROID_SDK_ROOT/platform-tools/adb(.exe)
+%LOCALAPPDATA%/Android/Sdk/platform-tools/adb.exe
+```
+
+Windows 本机可显式指定：
+
+```powershell
+$env:E2E_ADB="$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 ```
 
 停止录屏后：

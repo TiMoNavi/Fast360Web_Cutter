@@ -16,7 +16,7 @@ from app.models import ClipEditConfig, EffectEvent, EffectEventsPatch, ViewPathP
 from app.storage import DB_PATH, connect, save_clip_config, save_effect_events_patch, save_patch, utc_now  # noqa: E402
 
 
-DEFAULT_EMAIL = "madjad020@gmail.com"
+DEFAULT_EMAIL = "demo@invisible.local"
 VIDEO_ID = "video_training_07e4e3c1e9b6_old_ghost_road_mountain_bike"
 SESSION_ID = "session_training_07e4e3c1e9b6_old_ghost_road_mountain_bike"
 TAKE_ID = "take_pc_editor_demo_old_ghost_road_v1"

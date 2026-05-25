@@ -7,6 +7,7 @@ import type { TimelineBridgeStatus } from "../data/timeline-bridge";
 type StyleWithVars = CSSProperties & Record<`--${string}`, string>;
 
 type PcWorkbenchPanelProps = {
+  autoRenderEnabled: boolean;
   cropMaskState: CropMaskState;
   discardActive: boolean;
   discardLastRange: { endMs: number; startMs: number } | null;
@@ -15,6 +16,7 @@ type PcWorkbenchPanelProps = {
   cropWorkflowStatus: "idle" | "recording" | "ending" | "ready" | "rendering" | "done" | "error";
   exportDownloadUrl: string | null;
   isRenderDisabled?: boolean;
+  onAutoRenderToggle: (enabled: boolean) => void;
   onCut: () => void;
   onEndCrop: () => void;
   onFlush: () => void;
@@ -40,6 +42,7 @@ function formatTime(ms: number) {
 }
 
 export function PcWorkbenchPanel({
+  autoRenderEnabled,
   cropMaskState,
   discardActive,
   discardLastRange,
@@ -48,6 +51,7 @@ export function PcWorkbenchPanel({
   cropWorkflowStatus,
   exportDownloadUrl,
   isRenderDisabled = false,
+  onAutoRenderToggle,
   onCut,
   onEndCrop,
   onFlush,
@@ -163,6 +167,14 @@ export function PcWorkbenchPanel({
               <span className="xr-button-label">End crop</span>
               <span className="xr-button-key">seal</span>
             </button>
+            <label className="xr-auto-render-toggle">
+              <input
+                checked={autoRenderEnabled}
+                onChange={(e) => onAutoRenderToggle(e.target.checked)}
+                type="checkbox"
+              />
+              <span>Auto-render</span>
+            </label>
             <button data-testid="xr-pc-render" disabled={isRenderDisabled || cropWorkflowStatus === "rendering" || cropWorkflowStatus === "ending"} onClick={onRenderCrop} type="button">
               <span className="xr-button-label">{cropWorkflowStatus === "rendering" ? "Rendering" : "Render"}</span>
               <span className="xr-button-key">export</span>

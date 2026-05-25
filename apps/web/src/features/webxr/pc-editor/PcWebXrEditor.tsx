@@ -16,7 +16,7 @@ import { use360VideoPlaybackController } from "./controls/use360VideoPlaybackCon
 import { usePcEditorControls } from "./controls/usePcEditorControls";
 import type { AFrame360VideoSource } from "./controls/types";
 import type { AFrameEntityLike, Vector3Like, ViewTargetPose } from "./data/timeline-bridge/types";
-import { apiUrl, renderTest } from "@/lib/api";
+import { apiUrl, renderTest, updateCutSessionVideo } from "@/lib/api";
 import { AFrameEditorScene } from "./webxr/AFrameEditorScene";
 import { PcBgmControls } from "./ui/PcBgmControls";
 import { PcEditorDebugState } from "./ui/PcEditorDebugState";
@@ -254,6 +254,11 @@ export function PcWebXrEditor({
   const [cropWorkflowStatus, setCropWorkflowStatus] = useState<CropWorkflowStatus>("idle");
   const [cropWorkflowMessage, setCropWorkflowMessage] = useState("Ready to record a crop path.");
   const [cropExportId, setCropExportId] = useState<string | null>(null);
+  const [autoRenderEnabled, setAutoRenderEnabled] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const stored = localStorage.getItem("xr-auto-render-enabled");
+    return stored === null ? true : stored === "true";
+  });
   const [questProbeRunId, setQuestProbeRunId] = useState<string | null>(null);
   const { ready: aframeReady, error: loadError } = useAFrameRuntime();
   const resolvedInitialSources = useMemo<AFrame360VideoSource[] | undefined>(() => {
@@ -944,6 +949,18 @@ export function PcWebXrEditor({
     return nextStatus;
   }, [timelineBridge]);
 
+  const handleSelectSource = useCallback(
+    (sourceId: string) => {
+      if (timelineSessionId) {
+        void updateCutSessionVideo(timelineSessionId, sourceId).catch((error) => {
+          console.error("Failed to update session video:", error);
+        });
+      }
+      selectSource(sourceId);
+    },
+    [timelineSessionId, selectSource]
+  );
+
   const waitForAcceptedPathFlush = useCallback(
     async (afterRevision: number) => {
       const timeoutMs = 7000;
@@ -980,56 +997,6 @@ export function PcWebXrEditor({
     return status;
   }, [flushTimeline, pauseSampling, refreshTimelineStatus, resumeSampling, runCommand, waitForAcceptedPathFlush]);
 
-  const startCrop = useCallback(() => {
-    setCropExportId(null);
-    setCropWorkflowStatus("recording");
-    setCropWorkflowMessage("Recording crop path from the current PC mask.");
-    resumeSampling();
-    flushTimeline("lock");
-    void runCommand("play");
-  }, [flushTimeline, resumeSampling, runCommand]);
-
-  const endCrop = useCallback(async () => {
-    setCropWorkflowStatus("ending");
-    setCropWorkflowMessage("Sealing the crop path and sending the final mask sample...");
-    try {
-      const status = await sealCropPath();
-      const points = status.lastAcceptedPathPatch?.acceptedPoints ?? 0;
-      setCropWorkflowStatus("ready");
-      setCropWorkflowMessage(`Crop path sealed. Last patch accepted ${points} point${points === 1 ? "" : "s"}.`);
-    } catch (error) {
-      setCropWorkflowStatus("error");
-      setCropWorkflowMessage(error instanceof Error ? error.message : "Failed to seal the crop path.");
-    }
-  }, [sealCropPath]);
-
-  useEffect(() => {
-    if (cropWorkflowStatus !== "recording") {
-      return;
-    }
-
-    if (playbackState.isPlaying) {
-      resumeSampling();
-      setCropWorkflowMessage("Recording crop path from the current PC mask.");
-      return;
-    }
-
-    pauseSampling();
-    setCropWorkflowMessage("Recording paused while video playback is paused.");
-  }, [cropWorkflowStatus, pauseSampling, playbackState.isPlaying, resumeSampling]);
-
-  const isCropRecording = cropWorkflowStatus === "recording";
-  const isCropRecordingPaused = isCropRecording && !playbackState.isPlaying;
-  const isCropRecordingBusy = cropWorkflowStatus === "rendering" || cropWorkflowStatus === "ending";
-  const toggleCropRecording = useCallback(() => {
-    if (isCropRecording) {
-      void endCrop();
-      return;
-    }
-
-    startCrop();
-  }, [endCrop, isCropRecording, startCrop]);
-
   const renderCrop = useCallback(async () => {
     if (!timelineSessionId) {
       setCropWorkflowStatus("error");
@@ -1059,6 +1026,67 @@ export function PcWebXrEditor({
       setCropWorkflowMessage(error instanceof Error ? error.message : "Render failed.");
     }
   }, [cropWorkflowStatus, sealCropPath, timelineSessionId]);
+
+  const startCrop = useCallback(() => {
+    setCropExportId(null);
+    setCropWorkflowStatus("recording");
+    setCropWorkflowMessage("Recording crop path from the current PC mask.");
+    resumeSampling();
+    flushTimeline("lock");
+    void runCommand("play");
+  }, [flushTimeline, resumeSampling, runCommand]);
+
+  const endCrop = useCallback(async () => {
+    setCropWorkflowStatus("ending");
+    setCropWorkflowMessage("Sealing the crop path and sending the final mask sample...");
+    try {
+      const status = await sealCropPath();
+      const points = status.lastAcceptedPathPatch?.acceptedPoints ?? 0;
+      setCropWorkflowStatus("ready");
+      setCropWorkflowMessage(`Crop path sealed. Last patch accepted ${points} point${points === 1 ? "" : "s"}.`);
+
+      if (autoRenderEnabled) {
+        void renderCrop();
+      }
+    } catch (error) {
+      setCropWorkflowStatus("error");
+      setCropWorkflowMessage(error instanceof Error ? error.message : "Failed to seal the crop path.");
+    }
+  }, [autoRenderEnabled, renderCrop, sealCropPath]);
+
+  useEffect(() => {
+    if (cropWorkflowStatus !== "recording") {
+      return;
+    }
+
+    if (playbackState.isPlaying) {
+      resumeSampling();
+      setCropWorkflowMessage("Recording crop path from the current PC mask.");
+      return;
+    }
+
+    pauseSampling();
+    setCropWorkflowMessage("Recording paused while video playback is paused.");
+  }, [cropWorkflowStatus, pauseSampling, playbackState.isPlaying, resumeSampling]);
+
+  const isCropRecording = cropWorkflowStatus === "recording";
+  const isCropRecordingPaused = isCropRecording && !playbackState.isPlaying;
+  const isCropRecordingBusy = cropWorkflowStatus === "rendering" || cropWorkflowStatus === "ending";
+  const toggleCropRecording = useCallback(() => {
+    if (isCropRecording) {
+      void endCrop();
+      return;
+    }
+
+    startCrop();
+  }, [endCrop, isCropRecording, startCrop]);
+
+  const handleAutoRenderToggle = useCallback((enabled: boolean) => {
+    setAutoRenderEnabled(enabled);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("xr-auto-render-enabled", String(enabled));
+    }
+  }, []);
 
   if (loadError) {
     return (
@@ -1127,7 +1155,7 @@ export function PcWebXrEditor({
             onResetPlaybackRate={resetPlaybackRate}
             onResetRecordingRate={resetRecordingRate}
             onSeekTo={(timeMs) => void runCommand("seek-to", { timeMs })}
-            onSelectSource={(source) => selectSource(source.id)}
+            onSelectSource={(source) => handleSelectSource(source.id)}
             onTogglePlay={() => void runCommand("toggle-play")}
             onTogglePlaylist={toggleDomPlaylist}
             onToggleRecording={toggleCropRecording}
@@ -1152,6 +1180,7 @@ export function PcWebXrEditor({
         />
         {pcWorkbench ? (
           <PcWorkbenchPanel
+            autoRenderEnabled={autoRenderEnabled}
             cropMaskState={cropMaskState}
             discardActive={discardNotice.active}
             discardLastRange={discardNotice.lastRange}
@@ -1160,6 +1189,7 @@ export function PcWebXrEditor({
             cropWorkflowStatus={cropWorkflowStatus}
             exportDownloadUrl={cropExportDownloadUrl}
             isRenderDisabled={!timelineSessionId}
+            onAutoRenderToggle={handleAutoRenderToggle}
             onCut={cutHere}
             onEndCrop={() => void endCrop()}
             onFlush={() => flushTimeline("lock")}

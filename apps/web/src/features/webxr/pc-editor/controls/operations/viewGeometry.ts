@@ -1,6 +1,6 @@
 import type { PcViewCenter } from "../PcTrajectoryRippleCorrector";
 
-const MASK_EDGE_PAN_ZONE_PX = 132;
+const MASK_EDGE_PAN_ZONE_PX = 600;
 const MASK_EDGE_PAN_MAX_DEG_PER_SECOND = 46;
 
 export function clampNumber(value: number, min: number, max: number) {
@@ -87,4 +87,51 @@ export function screenPointToViewCenter({
     pitch: Math.asin(clampNumber(directionY, -1, 1)) * 180 / Math.PI,
     yaw: Math.atan2(directionX, -directionZ) * 180 / Math.PI
   });
+}
+
+export function viewCenterToScreenPoint({
+  cameraLook,
+  horizontalFov,
+  maskCenter,
+  stage
+}: {
+  cameraLook: PcViewCenter;
+  horizontalFov: number;
+  maskCenter: PcViewCenter;
+  stage: HTMLElement;
+}) {
+  const bounds = stage.getBoundingClientRect();
+  const aspectRatio = bounds.width && bounds.height ? bounds.width / bounds.height : 16 / 9;
+  const pitchRad = maskCenter.pitch * Math.PI / 180;
+  const yawRad = maskCenter.yaw * Math.PI / 180;
+  const directionX = Math.sin(yawRad) * Math.cos(pitchRad);
+  const directionY = Math.sin(pitchRad);
+  const directionZ = -Math.cos(yawRad) * Math.cos(pitchRad);
+  const cameraPitchRad = cameraLook.pitch * Math.PI / 180;
+  const cameraYawRad = cameraLook.yaw * Math.PI / 180;
+  const cosPitch = Math.cos(cameraPitchRad);
+  const sinPitch = Math.sin(cameraPitchRad);
+  const cosYaw = Math.cos(cameraYawRad);
+  const sinYaw = Math.sin(cameraYawRad);
+  const cameraX = directionX * cosYaw + directionZ * sinYaw;
+  const pitchedY = directionY * cosPitch + directionZ * sinPitch;
+  const pitchedZ = directionY * sinPitch - directionZ * cosPitch;
+  const cameraY = pitchedY * cosPitch + pitchedZ * sinPitch;
+  const cameraZ = -pitchedY * sinPitch + pitchedZ * cosPitch;
+
+  if (cameraZ >= 0) {
+    return null;
+  }
+
+  const verticalFovRad = horizontalFov * Math.PI / 180;
+  const halfHeight = Math.tan(verticalFovRad / 2);
+  const normalizedX = cameraX / (halfHeight * aspectRatio * -cameraZ);
+  const normalizedY = -cameraY / (halfHeight * -cameraZ);
+  const localX = (normalizedX / 2 + 0.5) * bounds.width;
+  const localY = (normalizedY / 2 + 0.5) * bounds.height;
+
+  return {
+    x: localX + bounds.left,
+    y: localY + bounds.top
+  };
 }

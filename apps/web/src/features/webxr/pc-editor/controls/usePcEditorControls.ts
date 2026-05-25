@@ -133,13 +133,16 @@ export function usePcEditorControls({
     runCommand
   });
   const edgePan = usePcEdgePan({
+    cameraLookRef,
     mask,
     maskDragging,
     pcWorkbench,
+    playbackState,
     sceneRef
   });
   const pointerInput = usePcMaskPointerInput({
     cameraLookRef,
+    cropMaskState,
     edgePan,
     mask,
     maskDragArmed: false,

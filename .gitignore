@@ -22,12 +22,29 @@ logs/
 *.out.log
 .tmp/
 uploads/
-storage/
+storage/*
+!storage/sample-videos/
+!storage/sample-videos/**
+storage/sample-videos/public-360/*4k*.mp4
 /exports/
 
 # Test output
 test-results/
 playwright-report/
+apps/web/test-results/
+
+# Local HTTPS certificates and private keys
+apps/web/certificates/
+*.pem
+*.key
+*.crt
+
+# Generated screenshots and presentation bundles
+quest-*.png
+quest-*.xml
+docs/hackathon-narrative/submission/presentation.zip
+docs/hackathon-narrative/submission/presentation/
+apps/web/*-check.png
 
 # Local reference clones
 references/github/*

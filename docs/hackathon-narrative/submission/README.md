@@ -1,10 +1,10 @@
-# The Invisible Director
+# 一眼成片 (OneGlance)
 
 **看一遍，就能发** - Watch once, share instantly.
 
 ## What is it?
 
-The Invisible Director is a spatial editing system for 360° videos. Put on a VR headset, watch your 360° footage, and use head tracking + buttons to create a shareable 16:9 video - no timeline scrubbing, no keyframe editing.
+一眼成片 is an extremely lightweight Web-based 360° video editor. Put on a VR headset, watch your 360° footage once, and use head tracking + buttons to create a shareable 16:9 video - no timeline scrubbing, no keyframe editing.
 
 ## Core Features
 
@@ -12,6 +12,7 @@ The Invisible Director is a spatial editing system for 360° videos. Put on a VR
 - 🎯 **Attention path recording**: System captures ViewPath (yaw/pitch/FOV/Lock/Skip/Cut) instead of screen recording
 - 🎬 **Instant export**: Backend re-projects 360° footage along your attention path → standard 16:9 MP4
 - 💻 **PC editor**: Visualize and fine-tune paths on desktop before export
+- 🌐 **Web-based**: No installation, works in browser with WebXR
 
 ## How it works
 

@@ -45,6 +45,8 @@ export function ShareButton({ exportId, filename, downloadUrl }: ShareButtonProp
       className="vapor-button vapor-button-ghost"
       onClick={handleShare}
       disabled={sharing}
+      data-testid="mobile-share-export"
+      aria-label={`分享 ${filename || exportId}`}
     >
       <span>{sharing ? "准备中..." : "分享"}</span>
     </button>

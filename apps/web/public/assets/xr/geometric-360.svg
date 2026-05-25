@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="2048" viewBox="0 0 4096 2048" role="img" aria-label="Geometric 360 degree fallback panorama">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#203247"/>
+      <stop offset="0.42" stop-color="#506476"/>
+      <stop offset="0.68" stop-color="#d8e0e6"/>
+      <stop offset="1" stop-color="#eff3f6"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.52"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="grid" width="256" height="256" patternUnits="userSpaceOnUse">
+      <path d="M 256 0 L 0 0 0 256" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2"/>
+      <path d="M 0 128 L 256 128 M 128 0 L 128 256" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="4096" height="2048" fill="url(#sky)"/>
+  <rect width="4096" height="2048" fill="url(#grid)"/>
+  <path d="M0 1320 C520 1160 840 1240 1240 1080 C1700 900 2040 1080 2440 940 C2920 780 3300 940 4096 700 L4096 2048 L0 2048 Z" fill="#182334" fill-opacity="0.34"/>
+  <path d="M0 1536 C620 1390 960 1480 1360 1320 C1780 1150 2140 1300 2560 1120 C3060 910 3500 1110 4096 930 L4096 2048 L0 2048 Z" fill="#e9eef2" fill-opacity="0.2"/>
+  <g fill="none" stroke="url(#line)" stroke-width="5">
+    <path d="M0 884 H4096"/>
+    <path d="M0 1128 H4096"/>
+    <path d="M0 1372 H4096"/>
+  </g>
+  <g fill="#ffffff" fill-opacity="0.2">
+    <circle cx="520" cy="520" r="5"/>
+    <circle cx="1120" cy="420" r="4"/>
+    <circle cx="1690" cy="610" r="6"/>
+    <circle cx="2330" cy="360" r="4"/>
+    <circle cx="3060" cy="560" r="5"/>
+    <circle cx="3710" cy="450" r="6"/>
+  </g>
+  <g fill="none" stroke="#9ee7ff" stroke-opacity="0.18" stroke-width="3">
+    <path d="M256 768 L640 520 L1024 768 L640 1016 Z"/>
+    <path d="M1792 620 L2176 372 L2560 620 L2176 868 Z"/>
+    <path d="M3008 840 L3392 592 L3776 840 L3392 1088 Z"/>
+  </g>
+</svg>

@@ -11,6 +11,10 @@ type XrBindingGlobal = Window &
     XRWebGLBinding?: typeof XRWebGLBinding;
   };
 
+type SetRendererSessionOptions = {
+  preferLegacyLayer?: boolean;
+};
+
 function isXrWebGlBindingSessionError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("XRWebGLBinding") && message.includes("XRSession");
@@ -46,7 +50,18 @@ async function withLegacyXrWebGlLayer<T>(callback: () => Promise<T>) {
   }
 }
 
-export async function setRendererSessionWithLabFallback(renderer: THREE.WebGLRenderer, session: BrowserXrSession) {
+export async function setRendererSessionWithLabFallback(
+  renderer: THREE.WebGLRenderer,
+  session: BrowserXrSession,
+  options: SetRendererSessionOptions = {}
+) {
+  const hasXrWebGlBinding = Boolean((window as XrBindingGlobal).XRWebGLBinding);
+
+  if (options.preferLegacyLayer && hasXrWebGlBinding) {
+    await withLegacyXrWebGlLayer(() => renderer.xr.setSession(session as unknown as XRSession));
+    return true;
+  }
+
   try {
     await renderer.xr.setSession(session as unknown as XRSession);
     return false;

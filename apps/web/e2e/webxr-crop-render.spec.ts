@@ -226,6 +226,13 @@ async function readCameraState(page: Page) {
   };
 }
 
+async function readVideoControlState(page: Page) {
+  const raw = await page.getByTestId("aframe-video-control-state").textContent();
+  return JSON.parse(raw || "{}") as {
+    status?: string;
+  };
+}
+
 async function readAFrameLookControlsState(page: Page) {
   return page.evaluate(() => {
     const camera = document.querySelector("a-camera") as
@@ -695,6 +702,21 @@ test.describe("PC WebXR crop render alignment", () => {
     await page.keyboard.up("d");
 
     await expect.poll(async () => (await readCropMaskState(page)).center?.yaw ?? 0).toBeGreaterThan(6);
+  });
+
+  test("Space toggles PC editor playback only once", async ({ page }) => {
+    const session = await createGridSession(page);
+    await openPcEditor(page, session.xrPath);
+    await setVideoForRecording(page, 1);
+
+    await expect.poll(async () => (await readCameraState(page)).camera !== undefined).toBe(true);
+    await expect.poll(async () => (await readVideoControlState(page)).status).toBe("playing");
+
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await readVideoControlState(page)).status).toBe("paused");
+
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await readVideoControlState(page)).status).toBe("playing");
   });
 
   test("mouse wheel can zoom the 360 camera into tiny-planet style FOV", async ({ page }) => {

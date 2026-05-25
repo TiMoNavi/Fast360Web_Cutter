@@ -1,0 +1,23 @@
+# 一眼成片 OneGlance
+
+## 50字介绍
+
+一眼成片是极其轻量的 Web XR 360° 视频剪辑器。戴上头显，欣赏一遍视频，系统记录注意力路径，自动渲染成普通视频。看一遍，就能发。
+
+## 核心价值
+
+将 360° 全景视频转换为普通平面视频的最短路径
+
+## GitHub
+
+```
+https://github.com/[your-username]/360videocutter
+```
+
+## 技术栈
+
+Next.js · Three.js · WebXR · Python · FFmpeg
+
+## Slogan
+
+**看一遍，就能发**

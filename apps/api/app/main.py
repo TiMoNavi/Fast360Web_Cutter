@@ -23,6 +23,11 @@ from .models import (
     ThumbnailRequest,
     ViewPathPatch,
 )
+from .incremental_render import (
+    SEGMENT_DURATION_MS,
+    cancel_segment_render,
+    trigger_segment_render,
+)
 from .rendering import run_frame_remap_equirect
 from .rendering.effects import events_for_segment
 from .rendering.path_pipeline import (
@@ -119,60 +124,60 @@ RENDER_TEST_MAX_FOV_RATE_DEGREES_PER_SECOND = 360
 DEMO_VIDEO_DIR = SAMPLE_VIDEOS_DIR / "public-360"
 DEMO_VIDEO_CATALOG = [
     {
-        "id": "overpass-warmup",
-        "title": "Overpass Warmup",
-        "subtitle": "A short outdoor 360 clip for first-time framing.",
-        "description": "Use this compact overpass clip to test basic yaw, cuts, and export without uploading your own file.",
-        "tags": ["outdoor", "4s", "starter"],
+        "id": "norah-head-walk",
+        "title": "Norah Head Rock Walk",
+        "subtitle": "4K outdoor coastal 360 experience.",
+        "description": "High-quality 4K 360 video of a scenic coastal walk, perfect for testing the full editing workflow.",
+        "tags": ["outdoor", "4k", "60s"],
         "difficulty": "beginner",
-        "sourceFilename": "valiant-overpass-mono-960x480-4s.mp4",
+        "sourceFilename": "norah-head-rock-walk-4k.mp4",
         "projection": "equirectangular",
         "layout": "mono-2:1",
-        "durationHintMs": 4000,
-        "resolutionLabel": "960 x 480",
-        "attribution": "Valiant360 demo clip, MIT license, copyright Charlie Hoey.",
+        "durationHintMs": 60000,
+        "resolutionLabel": "4096 x 2048",
+        "attribution": "Insta360 sample footage.",
         "tutorialSteps": [
-            {"title": "Pick the source", "body": "Start with a tiny 360 file so loading and rendering stay quick."},
-            {"title": "Frame the path", "body": "Enter WebXR and point the view toward the moment you want to keep."},
-            {"title": "Export a cut", "body": "Return to the web page and run the test render to download an MP4."},
+            {"title": "Preview in 4K", "body": "Experience high-resolution 360 video playback."},
+            {"title": "Frame your shot", "body": "Use WebXR to create smooth camera paths through the scene."},
+            {"title": "Export in quality", "body": "Render and download your edited 4K clip."},
         ],
     },
     {
-        "id": "relaxatron-tour",
-        "title": "Relaxatron Tour",
-        "subtitle": "A mellow room-scale clip with clear spatial cues.",
-        "description": "Good for learning how a 360 source becomes a normal 16:9 edit path.",
-        "tags": ["indoor", "8s", "guided"],
-        "difficulty": "beginner",
-        "sourceFilename": "elevr-relaxatron-mono-960x480-8s.mp4",
-        "projection": "equirectangular",
-        "layout": "mono-2:1",
-        "durationHintMs": 8000,
-        "resolutionLabel": "960 x 480",
-        "attribution": "eleVR Web Player demo video, MPL-2.0 license.",
-        "tutorialSteps": [
-            {"title": "Preview the sphere", "body": "Scrub the clip and notice where the interesting center of action sits."},
-            {"title": "Record intent", "body": "Use WebXR to create a view path instead of recording the headset screen."},
-            {"title": "Review output", "body": "Download the rendered test clip from the normal web detail page."},
-        ],
-    },
-    {
-        "id": "shark-scan",
-        "title": "Shark Scan",
-        "subtitle": "A playful 360 clip for practicing faster attention shifts.",
-        "description": "Use it to try a more dramatic camera path while still keeping the file small.",
-        "tags": ["motion", "8s", "practice"],
+        "id": "ghost-road-bike",
+        "title": "Old Ghost Road Mountain Bike",
+        "subtitle": "4K action-packed mountain biking adventure.",
+        "description": "Immersive 4K 360 mountain biking footage with dynamic motion and scenic views.",
+        "tags": ["action", "4k", "60s"],
         "difficulty": "practice",
-        "sourceFilename": "videojs-shark-mono-960x480-8s.mp4",
+        "sourceFilename": "ghost-road-bike-4k.mp4",
         "projection": "equirectangular",
         "layout": "mono-2:1",
-        "durationHintMs": 8000,
-        "resolutionLabel": "960 x 480",
-        "attribution": "videojs-panorama demo asset, Apache-2.0 license, copyright yanwsh@gmail.com.",
+        "durationHintMs": 60000,
+        "resolutionLabel": "4096 x 2048",
+        "attribution": "Training sample footage.",
         "tutorialSteps": [
-            {"title": "Find the action", "body": "Use the preview to decide where your virtual camera should look first."},
-            {"title": "Try a motion path", "body": "Enter WebXR and create a more active path through the 360 space."},
-            {"title": "Compare results", "body": "Render once, then reopen the same session to adjust the path."},
+            {"title": "Track the action", "body": "Follow the fast-paced movement with your camera path."},
+            {"title": "Create dynamic cuts", "body": "Use WebXR to capture the most exciting moments."},
+            {"title": "Polish your edit", "body": "Export a professional-quality action sequence."},
+        ],
+    },
+    {
+        "id": "default-sample-1",
+        "title": "4K Sample Experience",
+        "subtitle": "High-quality 360 video for testing.",
+        "description": "A 4K 360 video sample perfect for exploring the full capabilities of the editor.",
+        "tags": ["4k", "60s", "sample"],
+        "difficulty": "beginner",
+        "sourceFilename": "default-4k-sample-1.mp4",
+        "projection": "equirectangular",
+        "layout": "mono-2:1",
+        "durationHintMs": 60000,
+        "resolutionLabel": "4096 x 2048",
+        "attribution": "Sample footage.",
+        "tutorialSteps": [
+            {"title": "Load 4K content", "body": "Start with high-resolution 360 video."},
+            {"title": "Edit with precision", "body": "Create your camera path in WebXR."},
+            {"title": "Export your work", "body": "Download the final rendered video."},
         ],
     },
 ]
@@ -186,6 +191,17 @@ def startup() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/network-info")
+def network_info() -> dict[str, str]:
+    import socket
+    hostname = socket.gethostname()
+    try:
+        local_ip = socket.gethostbyname(hostname)
+    except Exception:
+        local_ip = "127.0.0.1"
+    return {"localIp": local_ip, "hostname": hostname}
 
 
 def hash_password(password: str, salt: str) -> str:
@@ -208,6 +224,44 @@ def verify_password(password: str, salt: str, expected_hash: str) -> bool:
 
 def normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def seed_default_videos_for_user(conn: sqlite3.Connection, user_id: str) -> None:
+    now = utc_now()
+    for item in DEMO_VIDEO_CATALOG:
+        source_path = DEMO_VIDEO_DIR / item["sourceFilename"]
+        if not source_path.is_file():
+            continue
+        video_id = new_id("video")
+        stored_filename = f"{video_id}{source_path.suffix}"
+        target_path = VIDEOS_DIR / stored_filename
+        shutil.copy2(source_path, target_path)
+        metadata = probe_video_metadata(target_path)
+        conn.execute(
+            """
+            INSERT INTO videos (
+                id, user_id, original_filename, stored_filename, content_type,
+                file_size, duration_ms, width, height, fps, metadata_json, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                video_id,
+                user_id,
+                item["sourceFilename"],
+                stored_filename,
+                "video/mp4",
+                target_path.stat().st_size,
+                metadata["durationMs"],
+                metadata["width"],
+                metadata["height"],
+                metadata["fps"],
+                json.dumps(metadata),
+                "ready",
+                now,
+                now,
+            ),
+        )
 
 
 def cleanup_expired_sessions(conn, now: str | None = None) -> None:
@@ -276,6 +330,7 @@ def register(payload: AuthRequest, response: Response) -> AuthUser:
                 """,
                 (user_id, email, password_hash, salt, utc_now()),
             )
+            seed_default_videos_for_user(conn, user_id)
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="Email already registered") from exc
     create_auth_session(response, user_id)
@@ -985,12 +1040,44 @@ def receive_path_patch(
         raise HTTPException(status_code=400, detail="sessionId does not match route")
     with connect() as conn:
         session = conn.execute(
-            "SELECT id FROM cut_sessions WHERE id = ? AND user_id = ?",
+            "SELECT id, timeline_revision FROM cut_sessions WHERE id = ? AND user_id = ?",
             (session_id, user["id"]),
         ).fetchone()
         if session is None:
             raise HTTPException(status_code=404, detail="Cut session not found")
         save_patch(conn, session_id, patch)
+
+        timeline_revision = session["timeline_revision"]
+        if patch.points:
+            max_t_ms = max(p.t_ms for p in patch.points)
+            min_t_ms = min(p.t_ms for p in patch.points)
+
+            completed_segment_index = max_t_ms // SEGMENT_DURATION_MS
+
+            existing_segments = conn.execute(
+                "SELECT segment_index, status FROM segment_renders WHERE session_id = ? AND status IN ('rendering', 'completed')",
+                (session_id,)
+            ).fetchall()
+
+            for seg in existing_segments:
+                if seg["segment_index"] > completed_segment_index or min_t_ms < seg["segment_index"] * SEGMENT_DURATION_MS:
+                    cancel_segment_render(session_id, seg["segment_index"])
+                    conn.execute(
+                        "UPDATE segment_renders SET status = 'cancelled', updated_at = ? WHERE session_id = ? AND segment_index = ?",
+                        (utc_now(), session_id, seg["segment_index"])
+                    )
+
+            for seg_idx in range(completed_segment_index):
+                existing = conn.execute(
+                    "SELECT id, status FROM segment_renders WHERE session_id = ? AND segment_index = ?",
+                    (session_id, seg_idx)
+                ).fetchone()
+
+                if existing is None or existing["status"] in ("cancelled", "failed"):
+                    start_ms = seg_idx * SEGMENT_DURATION_MS
+                    end_ms = (seg_idx + 1) * SEGMENT_DURATION_MS
+                    trigger_segment_render(session_id, seg_idx, start_ms, end_ms, timeline_revision)
+
     return {
         "sessionId": session_id,
         "takeId": patch.take_id,
@@ -1118,6 +1205,42 @@ def get_cut_session_status(session_id: str, user: dict[str, str] = Depends(requi
     )
 
 
+@app.get("/api/cut-sessions/{session_id}/segment-renders")
+def get_segment_renders(session_id: str, user: dict[str, str] = Depends(require_user)) -> dict:
+    with connect() as conn:
+        session = conn.execute(
+            "SELECT id FROM cut_sessions WHERE id = ? AND user_id = ?",
+            (session_id, user["id"]),
+        ).fetchone()
+        if session is None:
+            raise HTTPException(status_code=404, detail="Cut session not found")
+
+        segments = conn.execute(
+            """
+            SELECT segment_index, start_ms, end_ms, status, file_path, error_message, updated_at
+            FROM segment_renders
+            WHERE session_id = ?
+            ORDER BY segment_index
+            """,
+            (session_id,)
+        ).fetchall()
+
+    return {
+        "segments": [
+            {
+                "segmentIndex": s["segment_index"],
+                "startMs": s["start_ms"],
+                "endMs": s["end_ms"],
+                "status": s["status"],
+                "filePath": s["file_path"],
+                "errorMessage": s["error_message"],
+                "updatedAt": s["updated_at"],
+            }
+            for s in segments
+        ]
+    }
+
+
 @app.post("/api/cut-sessions/{session_id}/render-test")
 def render_test(session_id: str, user: dict[str, str] = Depends(require_user)) -> dict[str, str | bool | int | None]:
     export_id = new_id("export")
@@ -1173,53 +1296,66 @@ def render_test(session_id: str, user: dict[str, str] = Depends(require_user)) -
     try:
         if smoke_duration_ms <= 0:
             raise RuntimeError("Invalid smoke render duration")
-        selected = [point for point in all_points if float(point["t_ms"]) <= smoke_duration_ms]
-        if not selected:
-            raise RuntimeError("No renderable path points in smoke duration")
-        if float(selected[-1]["t_ms"]) < smoke_duration_ms:
-            selected.append({**selected[-1], "t_ms": float(smoke_duration_ms)})
 
-        render_segments = build_enabled_render_segments(selected)
-        if not render_segments:
-            raise RuntimeError("No enabled path ranges to render")
-
+        num_segments = (smoke_duration_ms + SEGMENT_DURATION_MS - 1) // SEGMENT_DURATION_MS
         segment_paths: list[Path] = []
-        for index, segment in enumerate(render_segments):
-            segment = prepare_render_segment(
-                segment,
-                fps=RENDER_TEST_FPS,
-                max_yaw_rate=RENDER_TEST_MAX_YAW_RATE_DEGREES_PER_SECOND,
-                max_pitch_rate=RENDER_TEST_MAX_PITCH_RATE_DEGREES_PER_SECOND,
-                max_fov_rate=RENDER_TEST_MAX_FOV_RATE_DEGREES_PER_SECOND,
-            )
-            segment_duration_ms = int(segment[-1]["t_ms"] - segment[0]["t_ms"])
-            if segment_duration_ms <= 0:
-                continue
-            segment_path = output_path if len(render_segments) == 1 else work_dir / f"segment-{index:03d}.mp4"
-            run_frame_remap_equirect(
-                source_path,
-                segment_path,
-                work_dir / f"segment-{index:03d}",
-                relative_segment_points(segment),
-                segment_duration_ms,
-                source_start_ms=int(segment[0]["t_ms"]),
-                fps=RENDER_TEST_FPS,
-                effect_events=events_for_segment(
-                    effects,
-                    int(segment[0]["t_ms"]),
-                    int(segment[-1]["t_ms"]),
-                ),
-            )
-            segment_paths.append(segment_path)
+
+        with connect() as conn:
+            completed_segments = {
+                row["segment_index"]: row["file_path"]
+                for row in conn.execute(
+                    "SELECT segment_index, file_path FROM segment_renders WHERE session_id = ? AND status = 'completed'",
+                    (session_id,)
+                ).fetchall()
+            }
+
+        for seg_idx in range(num_segments):
+            start_ms = seg_idx * SEGMENT_DURATION_MS
+            end_ms = min((seg_idx + 1) * SEGMENT_DURATION_MS, smoke_duration_ms)
+
+            if seg_idx in completed_segments and Path(completed_segments[seg_idx]).exists():
+                segment_paths.append(Path(completed_segments[seg_idx]))
+            else:
+                segment_points = [p for p in all_points if start_ms <= p["t_ms"] <= end_ms]
+                if not segment_points:
+                    continue
+
+                if segment_points[0]["t_ms"] > start_ms:
+                    first = {**segment_points[0], "t_ms": float(start_ms)}
+                    segment_points.insert(0, first)
+                if segment_points[-1]["t_ms"] < end_ms:
+                    last = {**segment_points[-1], "t_ms": float(end_ms)}
+                    segment_points.append(last)
+
+                segment = prepare_render_segment(
+                    segment_points,
+                    fps=RENDER_TEST_FPS,
+                    max_yaw_rate=RENDER_TEST_MAX_YAW_RATE_DEGREES_PER_SECOND,
+                    max_pitch_rate=RENDER_TEST_MAX_PITCH_RATE_DEGREES_PER_SECOND,
+                    max_fov_rate=RENDER_TEST_MAX_FOV_RATE_DEGREES_PER_SECOND,
+                )
+
+                segment_path = work_dir / f"segment-{seg_idx:03d}.mp4"
+                run_frame_remap_equirect(
+                    source_path,
+                    segment_path,
+                    work_dir / f"segment-{seg_idx:03d}",
+                    relative_segment_points(segment),
+                    end_ms - start_ms,
+                    source_start_ms=start_ms,
+                    fps=RENDER_TEST_FPS,
+                    effect_events=events_for_segment(effects, start_ms, end_ms),
+                )
+                segment_paths.append(segment_path)
 
         if not segment_paths:
-            raise RuntimeError("No non-empty enabled path ranges to render")
-        if len(segment_paths) > 1:
+            raise RuntimeError("No segments to render")
+        if len(segment_paths) == 1:
+            shutil.copy(segment_paths[0], output_path)
+        else:
             concat_segments_reencode(segment_paths, work_dir / "segments.txt", output_path, fps=RENDER_TEST_FPS)
 
-        rendered_duration_ms = sum(
-            int(segment[-1]["t_ms"] - segment[0]["t_ms"]) for segment in render_segments
-        )
+        rendered_duration_ms = smoke_duration_ms
         if (
             music_config is not None
             and bool(music_config["enabled"])

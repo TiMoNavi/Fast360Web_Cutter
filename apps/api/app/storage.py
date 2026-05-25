@@ -232,6 +232,24 @@ def init_storage() -> None:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES cut_sessions(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS segment_renders (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                segment_index INTEGER NOT NULL,
+                start_ms INTEGER NOT NULL,
+                end_ms INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                file_path TEXT,
+                error_message TEXT,
+                timeline_revision INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES cut_sessions(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_segment_renders_session
+                ON segment_renders(session_id, segment_index);
             """
         )
         ensure_column(conn, "videos", "user_id", "TEXT NOT NULL DEFAULT 'user_legacy_demo'")

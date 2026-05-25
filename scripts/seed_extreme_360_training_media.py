@@ -23,7 +23,7 @@ from app.storage import (  # noqa: E402
 )
 
 
-DEFAULT_EMAIL = "madjad020@gmail.com"
+DEFAULT_EMAIL = "demo@invisible.local"
 
 TRAINING_ITEMS = [
     {

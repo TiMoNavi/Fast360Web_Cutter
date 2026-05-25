@@ -4,13 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import {
   AdditiveBlending,
   BackSide,
-  BufferGeometry,
   Color,
   DoubleSide,
+  FrontSide,
   GridHelper,
   Group,
-  Line,
-  LineBasicMaterial,
+  LinearFilter,
   Mesh,
   MeshBasicMaterial,
   Object3D,
@@ -33,10 +32,10 @@ import { InteractiveGroup } from "three/examples/jsm/interactive/InteractiveGrou
 import { XRControllerModelFactory } from "three/examples/jsm/webxr/XRControllerModelFactory.js";
 import Hls from "hls.js";
 import { setRendererSessionWithLabFallback } from "@/components/xr/webXrLabCompat";
+import { apiUrl, renderTest, sendViewPathPatch, updateCutSessionVideo } from "@/lib/api";
+import type { ViewPathPatch, ViewPathPoint } from "@/lib/path-protocol";
 import {
   dispatchWebXrTimelineEvent,
-  normalizePitch,
-  normalizeYaw,
   type ViewInputSource,
   type ViewTargetPose,
   type WebXrSemanticEvent
@@ -44,218 +43,99 @@ import {
 import { createCropViewportMaskFragmentShader } from "@/features/webxr/pc-editor/webxr/AFrameCropViewportMask";
 import type { AFrame360VideoSource } from "@/features/webxr/pc-editor/controls/types";
 import { verticalFovFromHorizontal } from "@/features/webxr/pc-editor/viewFov";
+import { ThreeOfficialArwesWorkbenchDesk } from "./three-official-lab/ThreeOfficialArwesWorkbenchDesk";
+import { ThreeOfficialLabHud } from "./three-official-lab/ThreeOfficialLabHud";
+import { ThreeOfficialModeStrip } from "./three-official-lab/ThreeOfficialModeStrip";
+import { ThreeOfficialPlayerPanel } from "./three-official-lab/ThreeOfficialPlayerPanel";
+import { ThreeOfficialInteractiveLabStyles } from "./three-official-lab/ThreeOfficialInteractiveLabStyles";
+import {
+  ARWES_DESK_HTMLMESH_POSITION,
+  ARWES_DESK_LAYER_POSITION,
+  ARWES_DESK_POPUP_POSITION,
+  ARWES_DESK_POPUP_ROTATION_X,
+  ARWES_DESK_ROTATION_X
+} from "./three-official-lab/ThreeOfficialSpatialDeskLayout";
+import { bgmLabel, formatClock } from "./three-official-lab/format";
+import {
+  CROP_FRAME_DISTANCE,
+  CROP_MASK_RADIUS,
+  DEFAULT_VIEW_TARGET,
+  DEG_TO_RAD,
+  DUAL_SELECT_COMBO_MS,
+  FALLBACK_VIDEO_SOURCES,
+  FOV_FLUSH_DEBOUNCE_MS,
+  FOV_THUMBSTICK_DEADZONE,
+  FOV_THUMBSTICK_MAX_DEG_PER_SECOND,
+  HEAD_GAZE_HOLD_MS,
+  LEFT_MENU_BUTTON_INDEX,
+  MASK_OPACITY_DEFAULT,
+  MASK_OPACITY_MAX,
+  MASK_OPACITY_MIN,
+  MASK_OPACITY_THUMBSTICK_MAX_PER_SECOND,
+  QUICK_MENU_BUTTON_INDEX,
+  QUICK_MENU_ITEMS,
+  SPHERE_CLICK_MAX_MOVE_PX,
+  SPHERE_SMOOTH_MOVE_MS
+} from "./three-official-lab/constants";
+import {
+  actionMessage,
+  clampNumber,
+  createQuickMenuTileMaterial,
+  directionToViewTarget,
+  interpolateViewTargetPose,
+  makeControllerRay,
+  normalizeViewTargetPose,
+  readObjectForward,
+  semanticSummary,
+  styleXrButton,
+  viewTargetToDirection
+} from "./three-official-lab/runtimeHelpers";
+import type {
+  BgmChoice,
+  BrowserXr,
+  ControllerHand,
+  CropWorkflowStatus,
+  FollowMode,
+  LabBackendBinding,
+  LabEffectLogItem,
+  LabRecordingSample,
+  OfficialAction,
+  OfficialModule,
+  PlayerAction,
+  QuickMenuAction,
+  SyntheticControllerSelectDetail,
+  SyntheticQuickMenuDetail,
+  SyntheticThumbstickDetail,
+  UiEditMode,
+  WorkflowEffectAction,
+  XrControllerObject
+} from "./three-official-lab/types";
 
-type OfficialAction =
-  | "CUT"
-  | "DISCARD"
-  | "FLUSH"
-  | "LOCK"
-  | "PLAY"
-  | "RESTORE"
-  | "SAVE"
-  | "FX"
-  | "EXPORT"
-  | "SESSION"
-  | "FOV";
-type OfficialModule = "FRAME" | "FOV" | "FX" | "EXPORT" | "SESSION" | "SAMPLER";
-type PlayerAction = "NEXT" | "PLAY_TOGGLE" | "PREV" | "RATE_0_5" | "RATE_1" | "RATE_2" | "SELECT_SOURCE" | "TOGGLE_UI";
-type FollowMode = "controller_ray" | "head_gaze" | "idle";
-type ControllerHand = "left" | "right";
-type XrControllerObject = Group & {
-  addEventListener: (type: string, listener: (event: unknown) => void) => void;
-  removeEventListener: (type: string, listener: (event: unknown) => void) => void;
+type ThreeOfficialInteractiveLabProps = {
+  initialSources?: AFrame360VideoSource[];
+  sessionId?: string;
+  videoId?: string;
 };
-type BrowserXr = {
-  isSessionSupported?: (mode: "immersive-vr") => Promise<boolean>;
-  requestSession?: (mode: "immersive-vr", options?: XRSessionInit) => Promise<XRSession>;
-};
-type SyntheticControllerSelectDetail = {
-  hand?: ControllerHand;
-  instant?: boolean;
-  phase?: "end" | "start";
-  rayDirection?: { x: number; y: number; z: number };
-  rayOrigin?: { x: number; y: number; z: number };
-};
-type SyntheticThumbstickDetail = {
-  hand?: ControllerHand;
-  y?: number;
-};
 
-const DEG_TO_RAD = Math.PI / 180;
-const HEAD_GAZE_HOLD_MS = 280;
-const DUAL_SELECT_COMBO_MS = 160;
-const FOV_FLUSH_DEBOUNCE_MS = 260;
-const FOV_THUMBSTICK_DEADZONE = 0.18;
-const FOV_THUMBSTICK_MAX_DEG_PER_SECOND = 34;
-const MASK_OPACITY_DEFAULT = 0.74;
-const MASK_OPACITY_MAX = 0.95;
-const MASK_OPACITY_MIN = 0;
-const MASK_OPACITY_THUMBSTICK_MAX_PER_SECOND = 0.72;
-const SPHERE_CLICK_MAX_MOVE_PX = 8;
-const SPHERE_SMOOTH_MOVE_MS = 180;
-const DEFAULT_VIEW_TARGET: ViewTargetPose = {
-  input: "head_gaze",
-  pitch: 0,
-  yaw: 0
-};
-
-const FALLBACK_VIDEO_SOURCES: AFrame360VideoSource[] = [
-  {
-    durationMs: 185000,
-    id: "sample-mp4",
-    kind: "mp4",
-    resolution: "5760 x 2880",
-    sourceUrl: "/api/sample-video",
-    thumbnailUrl: "/assets/xr/geometric-360.svg",
-    title: "Local 360 MP4 sample"
-  }
-];
-
-function clampNumber(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function normalizeViewTargetPose(pose: ViewTargetPose): ViewTargetPose {
-  return {
-    input: pose.input,
-    pitch: Number(normalizePitch(pose.pitch).toFixed(2)),
-    yaw: Number(normalizeYaw(pose.yaw).toFixed(2))
-  };
-}
-
-function readObjectForward(object: Object3D, direction: Vector3, quaternion: Quaternion) {
-  object.getWorldQuaternion(quaternion);
-  return direction.set(0, 0, -1).applyQuaternion(quaternion).normalize();
-}
-
-function directionToViewTarget(direction: Vector3, input: ViewInputSource): ViewTargetPose {
-  const length = direction.length() || 1;
-  const x = direction.x / length;
-  const y = direction.y / length;
-  const z = direction.z / length;
-
-  return normalizeViewTargetPose({
-    input,
-    pitch: Math.asin(clampNumber(y, -1, 1)) * 180 / Math.PI,
-    yaw: Math.atan2(x, -z) * 180 / Math.PI
-  });
-}
-
-function viewTargetToDirection(pose: ViewTargetPose, target: Vector3) {
-  const yaw = pose.yaw * DEG_TO_RAD;
-  const pitch = pose.pitch * DEG_TO_RAD;
-  const cp = Math.cos(pitch);
-
-  return target.set(Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp).normalize();
-}
-
-function shortestYawDelta(from: number, to: number) {
-  return ((to - from + 540) % 360) - 180;
-}
-
-function easeOutCubic(value: number) {
-  const clamped = clampNumber(value, 0, 1);
-  return 1 - Math.pow(1 - clamped, 3);
-}
-
-function interpolateViewTargetPose(start: ViewTargetPose, target: ViewTargetPose, progress: number): ViewTargetPose {
-  const eased = easeOutCubic(progress);
-  return normalizeViewTargetPose({
-    input: target.input,
-    pitch: start.pitch + (target.pitch - start.pitch) * eased,
-    yaw: start.yaw + shortestYawDelta(start.yaw, target.yaw) * eased
-  });
-}
-
-function makeControllerRay() {
-  const geometry = new BufferGeometry().setFromPoints([new Vector3(0, 0, 0), new Vector3(0, 0, -1)]);
-  const material = new LineBasicMaterial({
-    color: 0x00ffff,
-    transparent: true,
-    opacity: 0.78
-  });
-  const line = new Line(geometry, material);
-  line.name = "official-controller-ray";
-  line.scale.z = 5;
-  return line;
-}
-
-function styleXrButton(button: HTMLButtonElement) {
-  button.style.position = "absolute";
-  button.style.bottom = "20px";
-  button.style.left = "calc(50% - 86px)";
-  button.style.zIndex = "999";
-  button.style.width = "172px";
-  button.style.minHeight = "48px";
-  button.style.border = "1px solid rgba(0, 255, 255, 0.78)";
-  button.style.borderRadius = "4px";
-  button.style.background = "rgba(7, 0, 17, 0.72)";
-  button.style.boxShadow = "0 0 22px rgba(0, 255, 255, 0.24)";
-  button.style.color = "#e0e0e0";
-  button.style.cursor = "pointer";
-  button.style.font = "900 13px ui-monospace, Consolas, monospace";
-  button.style.letterSpacing = "0";
-  button.style.opacity = "0.86";
-  button.style.padding = "12px 8px";
-}
-
-function actionMessage(action: OfficialAction, fov: number, locked: boolean) {
-  if (action === "CUT") {
-    return "CUT: native DOM button event from HTMLMesh";
-  }
-  if (action === "LOCK") {
-    return locked ? "LOCK: viewfinder locked" : "LOCK: viewfinder unlocked";
-  }
-  if (action === "SAVE") {
-    return "SAVE: patch flush would be requested";
-  }
-  if (action === "FX") {
-    return "FX: secondary menu would open";
-  }
-  if (action === "EXPORT") {
-    return "EXPORT: queue preview export";
-  }
-  if (action === "SESSION") {
-    return "SESSION: session panel selected";
-  }
-  return `FOV: ${fov}`;
-}
-
-function semanticSummary(event: WebXrSemanticEvent) {
-  if (event.type === "setFov") {
-    return `webxr:timeline-event ${event.type} h=${event.h}`;
-  }
-  if (event.type === "nudgeFov") {
-    return `webxr:timeline-event ${event.type} deltaH=${event.deltaH}`;
-  }
-  if (event.type === "flushPath") {
-    return `webxr:timeline-event ${event.type} reason=${event.reason ?? "live"}`;
-  }
-  if (event.type === "createEffectEvent") {
-    return `webxr:timeline-event ${event.type} effectType=${event.effectType}`;
-  }
-  if (event.type === "setViewTarget") {
-    return `webxr:timeline-event ${event.type} ${event.pose.input} yaw=${event.pose.yaw.toFixed(1)} pitch=${event.pose.pitch.toFixed(1)}`;
-  }
-  return `webxr:timeline-event ${event.type}`;
-}
-
-function formatClock(ms: number) {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
-
-export function ThreeOfficialInteractiveLab() {
+export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSessionId, videoId: propVideoId }: ThreeOfficialInteractiveLabProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<HTMLDivElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
   const sourceRef = useRef<HTMLDivElement | null>(null);
+  const statusRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const workflowStateRef = useRef<HTMLDivElement | null>(null);
+  const [backendAcceptedPoints, setBackendAcceptedPoints] = useState(0);
+  const [backendBinding, setBackendBinding] = useState<LabBackendBinding | null>(null);
+  const [backendStatus, setBackendStatus] = useState(initialSources?.length ? "backend playlist loaded" : "lab preview only");
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
+  const [bgmChoice, setBgmChoice] = useState<BgmChoice>("none");
+  const [bgmPreviewPlaying, setBgmPreviewPlaying] = useState(false);
+  const [cropExportId, setCropExportId] = useState<string | null>(null);
+  const [cropWorkflowMessage, setCropWorkflowMessage] = useState("Open workflow to record a crop path.");
+  const [cropWorkflowStatus, setCropWorkflowStatus] = useState<CropWorkflowStatus>("idle");
   const [durationMs, setDurationMs] = useState(0);
-  const [effectPage, setEffectPage] = useState(0);
+  const [effectLog, setEffectLog] = useState<LabEffectLogItem[]>([]);
   const [fov, setFov] = useState(82);
   const [lastAction, setLastAction] = useState("Ready: Three.js HTMLMesh + InteractiveGroup official interaction path.");
   const [lastSemantic, setLastSemantic] = useState("none");
@@ -263,26 +143,78 @@ export function ThreeOfficialInteractiveLab() {
   const [locked, setLocked] = useState(false);
   const [maskOpacity, setMaskOpacity] = useState(MASK_OPACITY_DEFAULT);
   const [mode, setMode] = useState("FX");
-  const [openModule, setOpenModule] = useState<OfficialModule | null>("FX");
+  const [openModule, setOpenModule] = useState<OfficialModule | null>(null);
   const [followMode, setFollowMode] = useState<FollowMode>("idle");
+  const [pendingEdit, setPendingEdit] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [playerUiVisible, setPlayerUiVisible] = useState(true);
   const [playbackStatus, setPlaybackStatus] = useState<"blocked" | "loading" | "ready" | "playing" | "paused" | "error">("loading");
+  const [recordingRate, setRecordingRate] = useState(1);
+  const [recordingSamples, setRecordingSamples] = useState<LabRecordingSample[]>([]);
+  const [spatialMenusVisible, setSpatialMenusVisible] = useState(true);
+  const [quickMenuActive, setQuickMenuActive] = useState(false);
+  const [quickMenuSelection, setQuickMenuSelection] = useState("none");
+  const quickMenuActiveRef = useRef(false);
+  const quickMenuSelectionRef = useRef<QuickMenuAction | null>(null);
+  const openModuleRef = useRef<OfficialModule | null>(openModule);
+  const spatialMenusVisibleRef = useRef(true);
   const [viewTarget, setViewTarget] = useState<ViewTargetPose>(DEFAULT_VIEW_TARGET);
   const [videoIndex, setVideoIndex] = useState(0);
-  const [videoSources, setVideoSources] = useState<AFrame360VideoSource[]>(FALLBACK_VIDEO_SOURCES);
+  const [videoSources, setVideoSources] = useState<AFrame360VideoSource[]>(() =>
+    initialSources?.length ? initialSources : FALLBACK_VIDEO_SOURCES
+  );
+  const currentTimeMsRef = useRef(currentTimeMs);
   const followModeRef = useRef<FollowMode>("idle");
   const fovRef = useRef(fov);
   const leftGripModifierRef = useRef(leftGripModifier);
   const lockedRef = useRef(locked);
   const maskOpacityRef = useRef(maskOpacity);
+  const pendingEditRef = useRef(pendingEdit);
+  const pathRevisionRef = useRef(0);
+  const cropWorkflowStatusRef = useRef<CropWorkflowStatus>("idle");
+  const recordingSamplesRef = useRef<LabRecordingSample[]>([]);
+  const takeIdRef = useRef(`three_lab_${Date.now().toString(36)}`);
+  const uiModeRef = useRef<UiEditMode>("IDLE");
   const viewTargetRef = useRef<ViewTargetPose>(DEFAULT_VIEW_TARGET);
+  const [uiMode, setUiMode] = useState<UiEditMode>("IDLE");
 
   const currentVideoSource = videoSources[videoIndex] ?? videoSources[0] ?? FALLBACK_VIDEO_SOURCES[0];
+
+  useEffect(() => {
+    currentTimeMsRef.current = currentTimeMs;
+  }, [currentTimeMs]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlSessionId = params.get("sessionId");
+    const urlVideoId = params.get("videoId");
+    const sessionId = propSessionId || urlSessionId;
+    const videoId = propVideoId || urlVideoId;
+    if (sessionId && videoId) {
+      setBackendBinding({ sessionId, videoId });
+      setBackendStatus("backend session bound");
+    }
+  }, [propSessionId, propVideoId]);
 
   function emitSemantic(event: WebXrSemanticEvent) {
     dispatchWebXrTimelineEvent(event);
     setLastSemantic(semanticSummary(event));
+    recordTimelineSampleForEvent(event);
+  }
+
+  function recordTimelineSampleForEvent(event: WebXrSemanticEvent) {
+    if (cropWorkflowStatusRef.current !== "recording") {
+      return;
+    }
+
+    if (event.type === "cutHere") {
+      pushRecordingSample("timeline:cut");
+      return;
+    }
+
+    if (event.type === "flushPath" && (event.reason === "fov" || event.reason === "discard" || event.reason === "restore")) {
+      pushRecordingSample(`timeline:${event.reason}`);
+    }
   }
 
   function setFollowModeValue(next: FollowMode) {
@@ -298,6 +230,49 @@ export function ThreeOfficialInteractiveLab() {
   function setLeftGripModifierValue(next: boolean) {
     leftGripModifierRef.current = next;
     setLeftGripModifier(next);
+  }
+
+  function setSpatialMenusVisibleValue(next: boolean) {
+    spatialMenusVisibleRef.current = next;
+    setSpatialMenusVisible(next);
+    if (!next) {
+      setOpenModule(null);
+      openModuleRef.current = null;
+      quickMenuActiveRef.current = false;
+      quickMenuSelectionRef.current = null;
+      setQuickMenuActive(false);
+      setQuickMenuSelection("none");
+    } else {
+      setPlayerUiVisible(true);
+    }
+    setLastAction(next ? "LEFT MENU: spatial menus restored." : "LEFT MENU: spatial menus collapsed.");
+  }
+
+  function toggleSpatialMenusVisible() {
+    setSpatialMenusVisibleValue(!spatialMenusVisibleRef.current);
+  }
+
+  function toggleCropWorkflowFromController(sourceLabel: string) {
+    if (cropWorkflowStatusRef.current === "recording") {
+      void endCropWorkflow();
+      setLastAction(`${sourceLabel}: ending crop recording.`);
+      return;
+    }
+
+    if (cropWorkflowStatusRef.current === "ending" || cropWorkflowStatusRef.current === "rendering") {
+      setLastAction(`${sourceLabel}: recording toggle ignored while workflow is busy.`);
+      return;
+    }
+
+    startCropWorkflow();
+    setLastAction(`${sourceLabel}: starting crop recording.`);
+  }
+
+  function setUiModeValue(next: UiEditMode, pending = pendingEditRef.current) {
+    uiModeRef.current = next;
+    pendingEditRef.current = pending;
+    setUiMode(next);
+    setPendingEdit(pending);
   }
 
   function setFovValue(next: number, semanticEvent?: WebXrSemanticEvent) {
@@ -328,9 +303,13 @@ export function ThreeOfficialInteractiveLab() {
     const next = previewViewTarget(pose);
     setFollowModeValue("idle");
     setLockedValue(true);
+    setUiModeValue("LOCKED", false);
     emitSemantic({ type: "setViewTarget", pose: next });
     emitSemantic({ type: "lockViewport" });
     emitSemantic({ type: "flushPath", reason: "lock" });
+    if (cropWorkflowStatusRef.current === "recording") {
+      pushRecordingSample(sourceLabel);
+    }
     setLastAction(`${sourceLabel}: locked yaw ${next.yaw.toFixed(1)} / pitch ${next.pitch.toFixed(1)}.`);
   }
 
@@ -351,8 +330,20 @@ export function ThreeOfficialInteractiveLab() {
   }, [maskOpacity]);
 
   useEffect(() => {
+    pendingEditRef.current = pendingEdit;
+  }, [pendingEdit]);
+
+  useEffect(() => {
     viewTargetRef.current = viewTarget;
   }, [viewTarget]);
+
+  useEffect(() => {
+    cropWorkflowStatusRef.current = cropWorkflowStatus;
+  }, [cropWorkflowStatus]);
+
+  useEffect(() => {
+    openModuleRef.current = openModule;
+  }, [openModule]);
 
   async function toggleVideoPlayback(sourceLabel = "PLAY") {
     const video = videoRef.current;
@@ -389,6 +380,7 @@ export function ThreeOfficialInteractiveLab() {
     const limitMs = Number.isFinite(video.duration) ? video.duration * 1000 : durationMs;
     const nextTimeMs = Math.max(0, Math.min(timeMs, Math.max(limitMs || timeMs, 0)));
     video.currentTime = nextTimeMs / 1000;
+    currentTimeMsRef.current = Math.round(nextTimeMs);
     setCurrentTimeMs(Math.round(nextTimeMs));
     emitSemantic({ type: "seekTo", tMs: Math.round(nextTimeMs) });
     setLastAction(`SEEK: sphere player moved to ${formatClock(nextTimeMs)}.`);
@@ -404,13 +396,239 @@ export function ThreeOfficialInteractiveLab() {
     setLastAction(`RATE: sphere player set to ${nextRate}x.`);
   }
 
+  function pushRecordingSample(reason: string) {
+    const pose = viewTargetRef.current;
+    const hFov = fovRef.current;
+    const sample: LabRecordingSample = {
+      fovH: Number(hFov.toFixed(2)),
+      fovV: Number(verticalFovFromHorizontal(hFov).toFixed(2)),
+      input: pose.input,
+      pitch: Number(pose.pitch.toFixed(2)),
+      reason,
+      seq: recordingSamplesRef.current.length + 1,
+      tMs: currentTimeMsRef.current,
+      yaw: Number(pose.yaw.toFixed(2))
+    };
+    const nextSamples = [...recordingSamplesRef.current, sample].slice(-24);
+    recordingSamplesRef.current = nextSamples;
+    setRecordingSamples(nextSamples);
+    return sample;
+  }
+
+  function setRecordingRateValue(rate: number) {
+    const nextRate = Number(clampNumber(rate, 0.25, 3).toFixed(2));
+    setRecordingRate(nextRate);
+    setLastAction(`RECORD RATE: lab recording rate set to ${nextRate}x.`);
+  }
+
+  function nudgeViewTarget(deltaYaw: number, deltaPitch: number, sourceLabel: string) {
+    const current = viewTargetRef.current;
+    commitViewTarget(
+      {
+        input: current.input,
+        pitch: current.pitch + deltaPitch,
+        yaw: current.yaw + deltaYaw
+      },
+      sourceLabel
+    );
+  }
+
+  function buildBackendPathPatch(binding: LabBackendBinding, reason: ViewPathPatch["replaceRange"]["reason"]): ViewPathPatch | null {
+    const samples = recordingSamplesRef.current;
+    if (!samples.length) {
+      return null;
+    }
+
+    let previousTime = -1;
+    const points: ViewPathPoint[] = samples.map((sample, index) => {
+      const tMs = Math.max(sample.tMs, previousTime + 1);
+      previousTime = tMs;
+      return {
+        center: {
+          pitch: sample.pitch,
+          yaw: sample.yaw
+        },
+        cut: index === 0 && reason === "cut",
+        enabled: true,
+        fov: {
+          h: sample.fovH,
+          v: sample.fovV
+        },
+        input: sample.input === "controller_ray" ? "controller_ray" : "head_gaze",
+        interpolation: "linear",
+        locked: lockedRef.current,
+        roll: 0,
+        seq: index + 1,
+        smoothFollow: sample.reason !== "SPHERE CTRL CLICK",
+        tMs,
+        transitionMs: sample.reason === "start" ? 0 : SPHERE_SMOOTH_MOVE_MS
+      };
+    });
+    const startMs = points[0]?.tMs ?? 0;
+    const endMs = Math.max(startMs + 1, (points.at(-1)?.tMs ?? startMs) + 200);
+    return {
+      pathRevision: ++pathRevisionRef.current,
+      points,
+      replaceRange: {
+        endMs,
+        reason,
+        startMs
+      },
+      sessionId: binding.sessionId,
+      takeId: takeIdRef.current,
+      version: 1,
+      videoId: binding.videoId
+    };
+  }
+
+  async function flushBackendPath(reason: ViewPathPatch["replaceRange"]["reason"]) {
+    if (!backendBinding) {
+      setBackendStatus("lab preview only");
+      return null;
+    }
+
+    const patch = buildBackendPathPatch(backendBinding, reason);
+    if (!patch) {
+      setBackendStatus("no local samples to send");
+      return null;
+    }
+
+    setBackendStatus(`sending path revision ${patch.pathRevision}`);
+    const result = await sendViewPathPatch(backendBinding.sessionId, patch);
+    const acceptedPoints = typeof result.acceptedPoints === "number" ? result.acceptedPoints : patch.points.length;
+    setBackendAcceptedPoints(acceptedPoints);
+    setBackendStatus(`accepted ${acceptedPoints} path point${acceptedPoints === 1 ? "" : "s"}`);
+    return { patch, result };
+  }
+
+  function startCropWorkflow() {
+    setCropExportId(null);
+    recordingSamplesRef.current = [];
+    setRecordingSamples([]);
+    cropWorkflowStatusRef.current = "recording";
+    setCropWorkflowStatus("recording");
+    setCropWorkflowMessage("Recording crop path from the current viewfinder.");
+    setUiModeValue(lockedRef.current ? "LOCKED" : "IDLE", true);
+    pushRecordingSample("start");
+    emitSemantic({ type: "samplingResume" });
+    setLastAction("WORKFLOW: start crop recording from spatial desk.");
+  }
+
+  async function endCropWorkflow() {
+    if (cropWorkflowStatusRef.current === "idle") {
+      setCropWorkflowMessage("Start recording before sealing a crop path.");
+      setLastAction("WORKFLOW: end crop ignored because recording has not started.");
+      return;
+    }
+
+    const sample = pushRecordingSample("end");
+    cropWorkflowStatusRef.current = "ending";
+    setCropWorkflowStatus("ending");
+    setCropWorkflowMessage(`Sealing ${sample.seq} lab samples for backend handoff...`);
+    setUiModeValue(lockedRef.current ? "LOCKED" : "IDLE", false);
+    emitSemantic({ type: "samplingPause" });
+    emitSemantic({ type: "flushPath", reason: "live" });
+    try {
+      await flushBackendPath("live");
+      cropWorkflowStatusRef.current = "ready";
+      setCropWorkflowStatus("ready");
+      setCropWorkflowMessage(`Crop path sealed with ${sample.seq} lab samples. Ready to render a preview export.`);
+      setLastAction("WORKFLOW: end crop sealed the current path.");
+    } catch (error) {
+      cropWorkflowStatusRef.current = "ready";
+      setCropWorkflowStatus("ready");
+      const message = error instanceof Error ? error.message : "Backend path flush failed.";
+      setBackendStatus(message);
+      setCropWorkflowMessage(`Lab path sealed locally. Backend flush failed: ${message}`);
+      setLastAction("WORKFLOW: local seal completed; backend path flush failed.");
+    }
+  }
+
+  async function renderCropWorkflow() {
+    if (cropWorkflowStatusRef.current !== "ready" && cropWorkflowStatusRef.current !== "done") {
+      setCropWorkflowMessage("Seal the crop path before rendering.");
+      setLastAction("WORKFLOW: render needs a sealed crop path.");
+      return;
+    }
+
+    setCropWorkflowStatus("rendering");
+    cropWorkflowStatusRef.current = "rendering";
+    setCropWorkflowMessage("Rendering preview export in lab mode...");
+    setLastAction("WORKFLOW: preview render queued.");
+    if (backendBinding) {
+      try {
+        setBackendStatus("backend render-test running");
+        const result = await renderTest(backendBinding.sessionId);
+        const nextExportId = typeof result.exportId === "string" ? result.exportId : "backend-render";
+        setCropExportId(nextExportId);
+        setBackendStatus(`render accepted ${nextExportId}`);
+        cropWorkflowStatusRef.current = "done";
+        setCropWorkflowStatus("done");
+        setCropWorkflowMessage(`Export ready with ${bgmLabel(bgmChoice)}.`);
+        setLastAction("WORKFLOW: backend preview export ready.");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Backend render-test failed.";
+        setBackendStatus(message);
+        cropWorkflowStatusRef.current = "ready";
+        setCropWorkflowStatus("ready");
+        setCropWorkflowMessage(`Backend render failed: ${message}`);
+        setLastAction("WORKFLOW: backend render-test failed.");
+      }
+      return;
+    }
+
+    window.setTimeout(() => {
+      setCropExportId("three-lab-preview-export");
+      cropWorkflowStatusRef.current = "done";
+      setCropWorkflowStatus("done");
+      setCropWorkflowMessage(`Export ready with ${bgmLabel(bgmChoice)}.`);
+      setLastAction("WORKFLOW: preview export ready.");
+    }, 240);
+  }
+
+  function selectBgm(choice: BgmChoice) {
+    setBgmChoice(choice);
+    setBgmPreviewPlaying(false);
+    setCropWorkflowMessage(choice === "none" ? "BGM disabled for this lab take." : `${bgmLabel(choice)} selected for export preview.`);
+    setLastAction(`BGM: ${bgmLabel(choice)} selected for spatial workflow.`);
+  }
+
+  function toggleBgmPreview() {
+    setBgmPreviewPlaying((playing) => !playing);
+    setLastAction(bgmChoice === "none" ? "BGM: choose a track before preview." : `BGM: ${bgmLabel(bgmChoice)} preview toggled.`);
+  }
+
+  function createWorkflowEffect(action: WorkflowEffectAction) {
+    const effect =
+      action === "effectWhite"
+        ? { displayName: "White flash", effectType: "transition.flash_white" as const }
+        : action === "effectVhs"
+          ? { displayName: "VHS blank", effectType: "black.solid" as const }
+          : { displayName: "Black fade", effectType: "transition.fade_black" as const };
+    setEffectLog((items) => [{ displayName: effect.displayName, effectType: effect.effectType, seq: items.length + 1 }, ...items].slice(0, 4));
+    emitSemantic({
+      type: "createEffectEvent",
+      displayName: effect.displayName,
+      durationMs: action === "effectWhite" ? 520 : 860,
+      effectType: effect.effectType,
+      params: {
+        source: "three-official-spatial-controls"
+      },
+      renderPolicy: {
+        fallback: "warn"
+      }
+    });
+    setLastAction(`EFFECT: ${effect.displayName} queued from spatial controls.`);
+  }
+
   useEffect(() => {
     const mount = mountRef.current;
     const playerSource = playerRef.current;
     const popupSource = popupRef.current;
     const source = sourceRef.current;
+    const statusSource = statusRef.current;
     const video = videoRef.current;
-    if (!mount || !playerSource || !popupSource || !source || !video) {
+    if (!mount || !playerSource || !popupSource || !source || !statusSource || !video) {
       return;
     }
 
@@ -418,8 +636,15 @@ export function ThreeOfficialInteractiveLab() {
     let htmlMesh: HTMLMesh | null = null;
     let playerMesh: HTMLMesh | null = null;
     let popupMesh: HTMLMesh | null = null;
+    let statusMesh: HTMLMesh | null = null;
     let cropMaskGeometry: SphereGeometry | null = null;
     let cropMaskMaterial: ShaderMaterial | null = null;
+    let cropFrameBarGeometry: PlaneGeometry | null = null;
+    let cropFrameHandleGeometry: PlaneGeometry | null = null;
+    let cropFrameHandleMaterial: MeshBasicMaterial | null = null;
+    let cropFrameMaterial: MeshBasicMaterial | null = null;
+    let targetRingGeometry: RingGeometry | null = null;
+    let targetRingMaterial: MeshBasicMaterial | null = null;
     let reticleGeometry: RingGeometry | null = null;
     let reticleMaterial: MeshBasicMaterial | null = null;
     let videoTexture: VideoTexture | null = null;
@@ -434,6 +659,7 @@ export function ThreeOfficialInteractiveLab() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType("local");
     renderer.domElement.setAttribute("data-testid", "three-official-canvas");
     mount.appendChild(renderer.domElement);
 
@@ -495,7 +721,9 @@ export function ThreeOfficialInteractiveLab() {
         const session = await navigatorXr.requestSession("immersive-vr", {
           optionalFeatures: ["local-floor", "bounded-floor"]
         });
-        const usedLegacyLayerFallback = await setRendererSessionWithLabFallback(renderer, session);
+        const usedLegacyLayerFallback = await setRendererSessionWithLabFallback(renderer, session, {
+          preferLegacyLayer: true
+        });
 
         currentXrSession = session;
         vrButton.textContent = "EXIT VR";
@@ -534,11 +762,15 @@ export function ThreeOfficialInteractiveLab() {
 
     videoTexture = new VideoTexture(video);
     videoTexture.colorSpace = SRGBColorSpace;
+    videoTexture.minFilter = LinearFilter;
+    videoTexture.magFilter = LinearFilter;
+    const videoSphereGeometry = new SphereGeometry(18, 64, 32);
+    videoSphereGeometry.scale(-1, 1, 1);
     const videoSphere = new Mesh(
-      new SphereGeometry(18, 64, 32),
+      videoSphereGeometry,
       new MeshBasicMaterial({
         map: videoTexture,
-        side: BackSide,
+        side: FrontSide,
         toneMapped: false
       })
     );
@@ -558,7 +790,7 @@ export function ThreeOfficialInteractiveLab() {
       uOpacity: { value: maskOpacityRef.current },
       uTime: { value: 0 }
     };
-    cropMaskGeometry = new SphereGeometry(17.5, 96, 48);
+    cropMaskGeometry = new SphereGeometry(CROP_MASK_RADIUS, 96, 48);
     cropMaskMaterial = new ShaderMaterial({
       depthTest: true,
       depthWrite: false,
@@ -595,43 +827,128 @@ export function ThreeOfficialInteractiveLab() {
     targetReticle.renderOrder = 42;
     scene.add(targetReticle);
 
+    cropFrameMaterial = new MeshBasicMaterial({
+      blending: AdditiveBlending,
+      color: 0x00ffff,
+      depthWrite: false,
+      opacity: 0.72,
+      side: DoubleSide,
+      transparent: true
+    });
+    cropFrameHandleMaterial = new MeshBasicMaterial({
+      blending: AdditiveBlending,
+      color: 0xff9900,
+      depthWrite: false,
+      opacity: 0.92,
+      side: DoubleSide,
+      transparent: true
+    });
+    cropFrameBarGeometry = new PlaneGeometry(1, 0.018);
+    cropFrameHandleGeometry = new PlaneGeometry(0.075, 0.075);
+    const cropFrame = new Group();
+    cropFrame.name = "three-official-crop-frame";
+    cropFrame.renderOrder = 43;
+    const frameTop = new Mesh(cropFrameBarGeometry, cropFrameMaterial);
+    const frameBottom = new Mesh(cropFrameBarGeometry, cropFrameMaterial);
+    const frameLeft = new Mesh(cropFrameBarGeometry, cropFrameMaterial);
+    const frameRight = new Mesh(cropFrameBarGeometry, cropFrameMaterial);
+    frameTop.position.y = 0.32;
+    frameBottom.position.y = -0.32;
+    frameLeft.position.x = -0.5;
+    frameLeft.rotation.z = Math.PI / 2;
+    frameRight.position.x = 0.5;
+    frameRight.rotation.z = Math.PI / 2;
+    cropFrame.add(frameTop, frameBottom, frameLeft, frameRight);
+    const cropFrameHandles: Array<Mesh<PlaneGeometry, MeshBasicMaterial>> = [];
+    for (const [x, y] of [
+      [-0.5, 0.32],
+      [0.5, 0.32],
+      [-0.5, -0.32],
+      [0.5, -0.32]
+    ] as const) {
+      const handle = new Mesh(cropFrameHandleGeometry, cropFrameHandleMaterial);
+      handle.position.set(x, y, 0.002);
+      cropFrame.add(handle);
+      cropFrameHandles.push(handle);
+    }
+    scene.add(cropFrame);
+
+    targetRingGeometry = new RingGeometry(0.06, 0.084, 64);
+    targetRingMaterial = new MeshBasicMaterial({
+      blending: AdditiveBlending,
+      color: 0xff9900,
+      depthWrite: false,
+      opacity: 0,
+      side: DoubleSide,
+      transparent: true
+    });
+    const targetRing = new Mesh(targetRingGeometry, targetRingMaterial);
+    targetRing.name = "three-official-target-ring";
+    targetRing.renderOrder = 44;
+    targetRing.visible = false;
+    scene.add(targetRing);
+
+    const workbenchLayerGroup = new Group();
+    workbenchLayerGroup.name = "official-arwes-layered-desk";
+    workbenchLayerGroup.position.set(ARWES_DESK_LAYER_POSITION.x, ARWES_DESK_LAYER_POSITION.y, ARWES_DESK_LAYER_POSITION.z);
+    workbenchLayerGroup.rotation.x = ARWES_DESK_ROTATION_X;
+    scene.add(workbenchLayerGroup);
+
     const underGlow = new Mesh(
-      new PlaneGeometry(1.14, 0.4),
+      new PlaneGeometry(1.24, 0.44),
       new MeshBasicMaterial({
+        blending: AdditiveBlending,
         color: 0xff00ff,
-        opacity: 0.12,
-        transparent: true,
-        depthWrite: false
+        depthWrite: false,
+        opacity: 0.16,
+        side: DoubleSide,
+        transparent: true
       })
     );
-    underGlow.position.set(0, 0.86, -1.43);
-    underGlow.rotation.x = -0.66;
-    scene.add(underGlow);
+    underGlow.position.z = -0.018;
+    underGlow.renderOrder = 0;
+    workbenchLayerGroup.add(underGlow);
+
+    const glassBase = new Mesh(
+      new PlaneGeometry(1.08, 0.34),
+      new MeshBasicMaterial({
+        color: 0x140a36,
+        depthWrite: false,
+        opacity: 0.28,
+        side: DoubleSide,
+        transparent: true
+      })
+    );
+    glassBase.position.z = -0.006;
+    glassBase.renderOrder = 1;
+    workbenchLayerGroup.add(glassBase);
 
     const cyanRim = new Mesh(
-      new PlaneGeometry(1.06, 0.33),
+      new PlaneGeometry(1.04, 0.315),
       new MeshBasicMaterial({
+        blending: AdditiveBlending,
         color: 0x00ffff,
-        opacity: 0.08,
-        transparent: true,
-        depthWrite: false
+        depthWrite: false,
+        opacity: 0.11,
+        side: DoubleSide,
+        transparent: true
       })
     );
-    cyanRim.position.set(0, 0.895, -1.405);
-    cyanRim.rotation.x = -0.66;
-    scene.add(cyanRim);
+    cyanRim.position.z = 0.008;
+    cyanRim.renderOrder = 2;
+    workbenchLayerGroup.add(cyanRim);
 
     const playerGlow = new Mesh(
-      new PlaneGeometry(0.38, 0.72),
+      new PlaneGeometry(1.12, 0.28),
       new MeshBasicMaterial({
         color: 0x00ffff,
-        opacity: 0.1,
+        opacity: 0.07,
         transparent: true,
         depthWrite: false
       })
     );
-    playerGlow.position.set(-0.76, 1.15, -1.32);
-    playerGlow.rotation.y = 0.26;
+    playerGlow.position.set(0, 1.16, -1.68);
+    playerGlow.rotation.x = -0.9;
     scene.add(playerGlow);
 
     const group = new InteractiveGroup();
@@ -640,24 +957,64 @@ export function ThreeOfficialInteractiveLab() {
 
     playerMesh = new HTMLMesh(playerSource);
     playerMesh.name = "official-htmlmesh-player";
-    playerMesh.position.set(-0.76, 1.15, -1.3);
-    playerMesh.rotation.y = 0.26;
-    playerMesh.renderOrder = 3;
+    playerMesh.position.set(0, 1.16, -1.66);
+    playerMesh.rotation.x = -0.9;
+    playerMesh.renderOrder = 4;
     group.add(playerMesh);
 
     htmlMesh = new HTMLMesh(source);
     htmlMesh.name = "official-htmlmesh-workbench";
-    htmlMesh.position.set(0, 0.91, -1.4);
-    htmlMesh.rotation.x = -0.66;
-    htmlMesh.renderOrder = 2;
+    htmlMesh.position.set(ARWES_DESK_HTMLMESH_POSITION.x, ARWES_DESK_HTMLMESH_POSITION.y, ARWES_DESK_HTMLMESH_POSITION.z);
+    htmlMesh.rotation.x = ARWES_DESK_ROTATION_X;
+    htmlMesh.renderOrder = 3;
     group.add(htmlMesh);
 
     popupMesh = new HTMLMesh(popupSource);
-    popupMesh.name = "official-htmlmesh-extension";
-    popupMesh.position.set(0, 1.16, -1.66);
-    popupMesh.rotation.x = -0.9;
-    popupMesh.renderOrder = 4;
+    popupMesh.name = "official-htmlmesh-workbench-popup";
+    popupMesh.position.set(ARWES_DESK_POPUP_POSITION.x, ARWES_DESK_POPUP_POSITION.y, ARWES_DESK_POPUP_POSITION.z);
+    popupMesh.rotation.x = ARWES_DESK_POPUP_ROTATION_X;
+    popupMesh.renderOrder = 6;
+    popupMesh.visible = Boolean(openModuleRef.current);
     group.add(popupMesh);
+
+    statusMesh = new HTMLMesh(statusSource);
+    statusMesh.name = "official-htmlmesh-mode-strip";
+    statusMesh.position.set(0, 1.55, -1.42);
+    statusMesh.rotation.x = -0.24;
+    statusMesh.renderOrder = 5;
+    group.add(statusMesh);
+
+    const quickMenuGroup = new Group();
+    quickMenuGroup.name = "three-official-b-button-quick-menu";
+    quickMenuGroup.visible = false;
+    quickMenuGroup.renderOrder = 80;
+    scene.add(quickMenuGroup);
+    const quickMenuTiles: Array<{
+      action: QuickMenuAction;
+      activeMaterial: MeshBasicMaterial;
+      inactiveMaterial: MeshBasicMaterial;
+      mesh: Mesh<PlaneGeometry, MeshBasicMaterial>;
+      x: number;
+      y: number;
+    }> = [];
+    const quickMenuCellWidth = 0.1;
+    const quickMenuCellHeight = 0.074;
+    const quickMenuGap = 0.012;
+    const quickMenuTileGeometry = new PlaneGeometry(quickMenuCellWidth, quickMenuCellHeight);
+    QUICK_MENU_ITEMS.forEach((item, index) => {
+      const col = index % 3;
+      const row = Math.floor(index / 3);
+      const x = (col - 1) * (quickMenuCellWidth + quickMenuGap);
+      const y = (1 - row) * (quickMenuCellHeight + quickMenuGap);
+      const inactiveMaterial = createQuickMenuTileMaterial(item, false);
+      const activeMaterial = createQuickMenuTileMaterial(item, true);
+      const tile = new Mesh(quickMenuTileGeometry, inactiveMaterial);
+      tile.name = `three-official-quick-menu-${item.action}`;
+      tile.position.set(x, y, 0);
+      tile.renderOrder = 81;
+      quickMenuGroup.add(tile);
+      quickMenuTiles.push({ action: item.action, activeMaterial, inactiveMaterial, mesh: tile, x, y });
+    });
 
     const controllerModelFactory = new XRControllerModelFactory();
     const controller1 = renderer.xr.getController(0);
@@ -666,8 +1023,6 @@ export function ThreeOfficialInteractiveLab() {
     controller2.add(makeControllerRay());
     scene.add(controller1);
     scene.add(controller2);
-    group.listenToXRControllerEvents(controller1);
-    group.listenToXRControllerEvents(controller2);
 
     const grip1 = renderer.xr.getControllerGrip(0);
     const grip2 = renderer.xr.getControllerGrip(1);
@@ -675,8 +1030,10 @@ export function ThreeOfficialInteractiveLab() {
     grip2.add(controllerModelFactory.createControllerModel(grip2));
     scene.add(grip1);
     scene.add(grip2);
+    const quickMenuGripAnchors = [grip1, grip2];
 
     const direction = new Vector3();
+    const frameDirection = new Vector3();
     const hitDirection = new Vector3();
     const markerDirection = new Vector3();
     const markerPosition = new Vector3();
@@ -686,6 +1043,8 @@ export function ThreeOfficialInteractiveLab() {
     const raycaster = new Raycaster();
     const rayDirection = new Vector3();
     const rayOrigin = new Vector3();
+    const quickMenuLocalPoint = new Vector3();
+    const quickMenuPointerWorld = new Vector3();
     const sphereCenter = new Vector3();
     const followControllerRef: { current: Object3D | null } = { current: null };
     const followControllerHandRef: { current: ControllerHand | null } = { current: null };
@@ -703,12 +1062,39 @@ export function ThreeOfficialInteractiveLab() {
       lastInputAt: 0,
       pendingFlush: false
     };
+    const quickMenuState = {
+      lastButtonDown: false,
+      recordToggleButtonDown: false,
+      syntheticPointerPosition: null as Vector3 | null,
+      syntheticRayDirection: null as Vector3 | null,
+      syntheticRayOrigin: null as Vector3 | null
+    };
+    const leftMenuButtonState = {
+      lastButtonDown: false
+    };
     const selectComboState: Record<
       ControllerHand,
-      { comboConsumed: boolean; down: boolean; instant: boolean; rayDirection: Vector3 | null; rayOrigin: Vector3 | null; startedAt: number }
+      {
+        comboConsumed: boolean;
+        down: boolean;
+        instant: boolean;
+        rayDirection: Vector3 | null;
+        rayOrigin: Vector3 | null;
+        startedAt: number;
+        uiPressed: boolean;
+      }
     > = {
-      left: { comboConsumed: false, down: false, instant: false, rayDirection: null, rayOrigin: null, startedAt: 0 },
-      right: { comboConsumed: false, down: false, instant: false, rayDirection: null, rayOrigin: null, startedAt: 0 }
+      left: { comboConsumed: false, down: false, instant: false, rayDirection: null, rayOrigin: null, startedAt: 0, uiPressed: false },
+      right: { comboConsumed: false, down: false, instant: false, rayDirection: null, rayOrigin: null, startedAt: 0, uiPressed: false }
+    };
+    const controllerDiscardState: {
+      active: boolean;
+      hand: ControllerHand | null;
+      startMs: number;
+    } = {
+      active: false,
+      hand: null,
+      startMs: 0
     };
     let pointerClickStart: { x: number; y: number } | null = null;
     let smoothViewTargetMove: {
@@ -718,6 +1104,8 @@ export function ThreeOfficialInteractiveLab() {
       startedAt: number;
       target: ViewTargetPose;
     } | null = null;
+    let targetRingPose: ViewTargetPose | null = null;
+    let targetRingVisibleUntil = 0;
     let lastViewTargetUiUpdate = 0;
     let pendingHeadGazeStartedAt: number | null = null;
 
@@ -751,6 +1139,93 @@ export function ThreeOfficialInteractiveLab() {
       return directionToViewTarget(hitDirection.copy(sphereHit.point).sub(sphereCenter).normalize(), input);
     }
 
+    function getUiHitFromRay(origin: Vector3, rayDirectionValue: Vector3) {
+      const uiObjects = [playerMesh, htmlMesh, popupMesh].filter((object): object is HTMLMesh => Boolean(object?.visible));
+      if (!uiObjects.length) {
+        return null;
+      }
+
+      raycaster.ray.set(origin, rayDirectionValue.normalize());
+      return raycaster.intersectObjects(uiObjects, false)[0] ?? null;
+    }
+
+    function domSourceForHtmlMesh(mesh: HTMLMesh) {
+      if (mesh === playerMesh) {
+        return playerSource;
+      }
+      if (mesh === htmlMesh) {
+        return source;
+      }
+      if (mesh === popupMesh) {
+        return popupSource;
+      }
+      return null;
+    }
+
+    function hasInteractiveDomTarget(mesh: HTMLMesh, uv: Vector2) {
+      const domSource = domSourceForHtmlMesh(mesh);
+      if (!domSource) {
+        return false;
+      }
+
+      const rootRect = domSource.getBoundingClientRect();
+      const x = rootRect.left + uv.x * rootRect.width;
+      const y = rootRect.top + (1 - uv.y) * rootRect.height;
+      const interactiveElements = Array.from(domSource.querySelectorAll<HTMLElement>("button, input, select, a[href]"));
+
+      return interactiveElements.some((element) => {
+        if (element instanceof HTMLButtonElement && element.disabled) {
+          return false;
+        }
+        if (element instanceof HTMLInputElement && element.disabled) {
+          return false;
+        }
+        if (element instanceof HTMLSelectElement && element.disabled) {
+          return false;
+        }
+
+        const rect = element.getBoundingClientRect();
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      });
+    }
+
+    function dispatchHtmlMeshPointerEventFromRay(origin: Vector3, rayDirectionValue: Vector3, eventType: "click" | "mousedown" | "mouseup") {
+      const uiHit = getUiHitFromRay(origin, rayDirectionValue);
+      if (!uiHit?.uv || !(uiHit.object instanceof HTMLMesh)) {
+        return false;
+      }
+      if (!hasInteractiveDomTarget(uiHit.object, uiHit.uv)) {
+        return false;
+      }
+
+      uiHit.object.dispatchEvent({
+        data: new Vector2(uiHit.uv.x, 1 - uiHit.uv.y),
+        type: eventType
+      } as never);
+      return true;
+    }
+
+    function dispatchHtmlMeshPointerEventFromController(
+      hand: ControllerHand,
+      controller: Object3D,
+      eventType: "click" | "mousedown" | "mouseup",
+      detail?: SyntheticControllerSelectDetail
+    ) {
+      const detailOrigin = vectorFromDetail(detail?.rayOrigin);
+      const detailDirection = vectorFromDetail(detail?.rayDirection);
+      const override = controllerRayOverrideState[hand];
+      const origin = detailOrigin ?? override.rayOrigin;
+      const directionValue = detailDirection ?? override.rayDirection;
+
+      if (origin && directionValue) {
+        return dispatchHtmlMeshPointerEventFromRay(origin, directionValue, eventType);
+      }
+
+      controller.getWorldPosition(rayOrigin);
+      readObjectForward(controller, rayDirection, quaternion);
+      return dispatchHtmlMeshPointerEventFromRay(rayOrigin, rayDirection, eventType);
+    }
+
     function getSpherePoseFromPointer(event: PointerEvent) {
       const rect = renderer.domElement.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
@@ -768,6 +1243,117 @@ export function ThreeOfficialInteractiveLab() {
       return getSpherePoseFromRay(rayOrigin, rayDirection, "controller_ray");
     }
 
+    function setQuickMenuHighlightedAction(action: QuickMenuAction | null) {
+      quickMenuSelectionRef.current = action;
+      setQuickMenuSelection(action ?? "none");
+      for (const tile of quickMenuTiles) {
+        tile.mesh.material = tile.action === action ? tile.activeMaterial : tile.inactiveMaterial;
+      }
+    }
+
+    function placeQuickMenu(anchorObject: Object3D) {
+      camera.getWorldPosition(cameraPosition);
+      const syntheticPointer = quickMenuState.syntheticPointerPosition ?? quickMenuState.syntheticRayOrigin;
+      if (syntheticPointer) {
+        quickMenuGroup.position.copy(syntheticPointer);
+      } else {
+        anchorObject.getWorldPosition(rayOrigin);
+        quickMenuGroup.position.copy(rayOrigin);
+      }
+      quickMenuGroup.lookAt(cameraPosition);
+      quickMenuGroup.updateMatrixWorld(true);
+    }
+
+    function openQuickMenu(anchorObject: Object3D = grip2) {
+      quickMenuActiveRef.current = true;
+      setQuickMenuActive(true);
+      setQuickMenuHighlightedAction(null);
+      placeQuickMenu(anchorObject);
+      quickMenuGroup.visible = true;
+      setUiModeValue("AIM", pendingEditRef.current);
+      setLastAction("B HOLD: quick menu opened.");
+    }
+
+    async function executeQuickMenuAction(action: QuickMenuAction) {
+      if (action === "startCrop") {
+        startCropWorkflow();
+      } else if (action === "endCrop") {
+        await endCropWorkflow();
+      } else if (action === "render") {
+        await renderCropWorkflow();
+      } else if (action === "cut") {
+        emitSemantic({ type: "cutHere" });
+        setLastAction("B QUICK MENU: Cut triggered.");
+      } else if (action === "lock") {
+        const next = !lockedRef.current;
+        setLockedValue(next);
+        setUiModeValue(next ? "LOCKED" : "IDLE", pendingEditRef.current);
+        emitSemantic({ type: next ? "lockViewport" : "unlockViewport" });
+        emitSemantic({ type: "flushPath", reason: "lock" });
+        setLastAction(`B QUICK MENU: viewfinder ${next ? "locked" : "unlocked"}.`);
+      } else if (action === "blackFade") {
+        createWorkflowEffect("effectBlack");
+      } else if (action === "whiteFlash") {
+        createWorkflowEffect("effectWhite");
+      } else if (action === "save") {
+        emitSemantic({ type: "flushPath", reason: "live" });
+        setLastAction("B QUICK MENU: path flush requested.");
+      } else if (action === "discard") {
+        emitSemantic({ type: "discardRange" });
+        emitSemantic({ type: "flushPath", reason: "discard" });
+        setLastAction("B QUICK MENU: discard range event queued.");
+      } else if (action === "restore") {
+        emitSemantic({ type: "restoreRange" });
+        emitSemantic({ type: "flushPath", reason: "restore" });
+        setLastAction("B QUICK MENU: restore range event queued.");
+      } else if (action === "vhsBlank") {
+        createWorkflowEffect("effectVhs");
+      } else if (action === "fovIn") {
+        setFovValue(fovRef.current - 5, { type: "nudgeFov", deltaH: -5 });
+        emitSemantic({ type: "flushPath", reason: "fov" });
+        setLastAction("B QUICK MENU: FOV pushed in.");
+      } else if (action === "fovOut") {
+        setFovValue(fovRef.current + 5, { type: "nudgeFov", deltaH: 5 });
+        emitSemantic({ type: "flushPath", reason: "fov" });
+        setLastAction("B QUICK MENU: FOV pulled out.");
+      }
+    }
+
+    function closeQuickMenu(trigger = true) {
+      const action = quickMenuSelectionRef.current;
+      quickMenuActiveRef.current = false;
+      setQuickMenuActive(false);
+      setQuickMenuHighlightedAction(null);
+      quickMenuGroup.visible = false;
+      setUiModeValue(lockedRef.current ? "LOCKED" : "IDLE", pendingEditRef.current);
+      if (trigger && action) {
+        void executeQuickMenuAction(action);
+      } else {
+        setLastAction("B RELEASE: quick menu closed without selection.");
+      }
+    }
+
+    function updateQuickMenuSelection(pointerObject: Object3D) {
+      if (!quickMenuActiveRef.current) {
+        return;
+      }
+
+      const syntheticPointer = quickMenuState.syntheticPointerPosition ?? quickMenuState.syntheticRayOrigin;
+      if (syntheticPointer) {
+        quickMenuPointerWorld.copy(syntheticPointer);
+      } else {
+        pointerObject.getWorldPosition(quickMenuPointerWorld);
+      }
+      quickMenuLocalPoint.copy(quickMenuPointerWorld);
+      quickMenuGroup.worldToLocal(quickMenuLocalPoint);
+      const hit = quickMenuTiles.find(
+        (tile) =>
+          Math.abs(quickMenuLocalPoint.x - tile.x) <= quickMenuCellWidth / 2 &&
+          Math.abs(quickMenuLocalPoint.y - tile.y) <= quickMenuCellHeight / 2
+      );
+      setQuickMenuHighlightedAction(hit?.action ?? null);
+    }
+
     function beginSmoothViewTargetMove(target: ViewTargetPose, sourceLabel: string) {
       smoothViewTargetMove = {
         durationMs: SPHERE_SMOOTH_MOVE_MS,
@@ -776,10 +1362,13 @@ export function ThreeOfficialInteractiveLab() {
         startedAt: performance.now(),
         target
       };
+      targetRingPose = target;
+      targetRingVisibleUntil = performance.now() + SPHERE_SMOOTH_MOVE_MS + 420;
       followControllerRef.current = null;
       followControllerHandRef.current = null;
       setFollowModeValue("idle");
       setLockedValue(false);
+      setUiModeValue("AIM", true);
       emitSemantic({ type: "unlockViewport" });
       setLastAction(`${sourceLabel}: moving to yaw ${target.yaw.toFixed(1)} / pitch ${target.pitch.toFixed(1)}.`);
     }
@@ -828,6 +1417,7 @@ export function ThreeOfficialInteractiveLab() {
       followControllerHandRef.current = null;
       setFollowModeValue("head_gaze");
       setLockedValue(false);
+      setUiModeValue("GAZE", true);
       emitSemantic({ type: "unlockViewport" });
       setLastAction("TRIGGER HOLD: viewfinder follows headset gaze.");
     }
@@ -835,6 +1425,53 @@ export function ThreeOfficialInteractiveLab() {
     function queueHeadGazeFollow() {
       pendingHeadGazeStartedAt = performance.now();
       setLastAction("TRIGGER: hold to steer viewfinder, tap remains available for spatial buttons.");
+    }
+
+    function readControllerTimelineTimeMs() {
+      const currentVideo = videoRef.current;
+      if (currentVideo && Number.isFinite(currentVideo.currentTime)) {
+        return Math.max(0, Math.round(currentVideo.currentTime * 1000));
+      }
+      return currentTimeMsRef.current;
+    }
+
+    function beginControllerDiscardRange(hand: ControllerHand) {
+      if (controllerDiscardState.active) {
+        return;
+      }
+
+      const currentVideo = videoRef.current;
+      if (!currentVideo || currentVideo.paused) {
+        setLastAction("LEFT GRIP + RIGHT TRIGGER: play the video before marking a discard range.");
+        return;
+      }
+
+      const startMs = readControllerTimelineTimeMs();
+      controllerDiscardState.active = true;
+      controllerDiscardState.hand = hand;
+      controllerDiscardState.startMs = startMs;
+      pendingHeadGazeStartedAt = null;
+      setFollowModeValue("idle");
+      setUiModeValue("AIM", true);
+      emitSemantic({ type: "discardRange", startMs });
+      setLastAction(`LEFT GRIP + RIGHT TRIGGER HOLD: discard starts at ${formatClock(startMs)}.`);
+    }
+
+    function finishControllerDiscardRange(reason: string) {
+      if (!controllerDiscardState.active) {
+        return false;
+      }
+
+      const startMs = controllerDiscardState.startMs;
+      const endMs = Math.max(startMs + 1, readControllerTimelineTimeMs());
+      controllerDiscardState.active = false;
+      controllerDiscardState.hand = null;
+      controllerDiscardState.startMs = 0;
+      emitSemantic({ type: "restoreRange", startMs, endMs });
+      emitSemantic({ type: "flushPath", reason: "discard" });
+      setUiModeValue(lockedRef.current ? "LOCKED" : "IDLE", false);
+      setLastAction(`${reason}: discard marked ${formatClock(startMs)}-${formatClock(endMs)}.`);
+      return true;
     }
 
     function vectorFromDetail(value: SyntheticControllerSelectDetail["rayDirection"] | SyntheticControllerSelectDetail["rayOrigin"]) {
@@ -905,7 +1542,14 @@ export function ThreeOfficialInteractiveLab() {
       current.instant = Boolean(detail?.instant);
       current.rayOrigin = detailOrigin;
       current.rayDirection = detailDirection;
+      current.uiPressed = false;
       setControllerRayOverride(hand, detail);
+
+      if (hand === "right" && leftGripModifierRef.current) {
+        current.comboConsumed = true;
+        beginControllerDiscardRange(hand);
+        return;
+      }
 
       if (other.down && now - other.startedAt <= DUAL_SELECT_COMBO_MS) {
         current.comboConsumed = true;
@@ -913,6 +1557,16 @@ export function ThreeOfficialInteractiveLab() {
         pendingHeadGazeStartedAt = null;
         setFollowModeValue("idle");
         void toggleVideoPlayback("DUAL SELECT");
+        return;
+      }
+
+      if (dispatchHtmlMeshPointerEventFromController(hand, controller, "mousedown", detail)) {
+        current.comboConsumed = true;
+        current.uiPressed = true;
+        pendingHeadGazeStartedAt = null;
+        setFollowModeValue("idle");
+        setUiModeValue("AIM", pendingEditRef.current);
+        setLastAction(`UI RAY ${hand.toUpperCase()}: spatial button pressed.`);
         return;
       }
 
@@ -927,6 +1581,25 @@ export function ThreeOfficialInteractiveLab() {
       current.down = false;
       current.comboConsumed = false;
       current.instant = false;
+
+      if (current.uiPressed) {
+        current.uiPressed = false;
+        pendingHeadGazeStartedAt = null;
+        dispatchHtmlMeshPointerEventFromController(hand, controller, "mouseup", detail);
+        dispatchHtmlMeshPointerEventFromController(hand, controller, "click", detail);
+        setLastAction(`UI RAY ${hand.toUpperCase()}: spatial button clicked.`);
+        current.rayOrigin = null;
+        current.rayDirection = null;
+        return;
+      }
+
+      if (controllerDiscardState.active && controllerDiscardState.hand === hand) {
+        finishControllerDiscardRange("RIGHT TRIGGER RELEASE");
+        pendingHeadGazeStartedAt = null;
+        current.rayOrigin = null;
+        current.rayDirection = null;
+        return;
+      }
 
       if (comboConsumed) {
         pendingHeadGazeStartedAt = null;
@@ -968,11 +1641,17 @@ export function ThreeOfficialInteractiveLab() {
     function beginOpacityModifier() {
       setLeftGripModifierValue(true);
       setFollowModeValue("idle");
+      setUiModeValue("OPACITY", false);
       setLastAction("LEFT GRIP HOLD: right stick controls mask opacity.");
     }
 
     function endOpacityModifier() {
       setLeftGripModifierValue(false);
+      if (controllerDiscardState.active) {
+        finishControllerDiscardRange("LEFT GRIP RELEASE");
+        return;
+      }
+      setUiModeValue(lockedRef.current ? "LOCKED" : "IDLE", pendingEditRef.current);
       setLastAction(`LEFT GRIP RELEASE: mask opacity ${maskOpacityRef.current.toFixed(2)}.`);
     }
 
@@ -997,8 +1676,9 @@ export function ThreeOfficialInteractiveLab() {
       followControllerHandRef.current = hand;
       setFollowModeValue("controller_ray");
       setLockedValue(false);
+      setUiModeValue("DRAG", true);
       emitSemantic({ type: "controllerAimStart", hand });
-      setLastAction(`GRIP HOLD: ${hand} controller ray is steering the viewfinder.`);
+      setLastAction(`GRIP HOLD: ${hand} controller ray drags viewfinder; right stick changes FOV while dragging.`);
     }
 
     function commitControllerFollow(controller: Object3D, hand: ControllerHand, detail?: SyntheticControllerSelectDetail) {
@@ -1008,6 +1688,7 @@ export function ThreeOfficialInteractiveLab() {
         commitViewTarget(pose, `GRIP RELEASE ${hand.toUpperCase()}`);
       } else {
         setFollowModeValue("idle");
+        setUiModeValue("IDLE", false);
         setLastAction(`GRIP RELEASE ${hand.toUpperCase()}: no video sphere target.`);
       }
       followControllerRef.current = null;
@@ -1089,6 +1770,42 @@ export function ThreeOfficialInteractiveLab() {
       thumbstickOverrideState[detail.hand].y = y;
     }
 
+    function handleSyntheticQuickMenu(event: Event) {
+      const detail = (event as CustomEvent<SyntheticQuickMenuDetail>).detail;
+      const pointerPosition = vectorFromDetail(detail?.pointerPosition);
+      const origin = vectorFromDetail(detail?.rayOrigin);
+      const directionValue = vectorFromDetail(detail?.rayDirection);
+      if (pointerPosition) {
+        quickMenuState.syntheticPointerPosition = pointerPosition;
+      }
+      if (origin) {
+        quickMenuState.syntheticRayOrigin = origin;
+      }
+      if (directionValue) {
+        quickMenuState.syntheticRayDirection = directionValue;
+      }
+
+      if (detail?.phase === "press") {
+        openQuickMenu(grip2);
+      } else if (detail?.phase === "aim") {
+        updateQuickMenuSelection(grip2);
+      } else if (detail?.phase === "release") {
+        updateQuickMenuSelection(grip2);
+        closeQuickMenu(true);
+        quickMenuState.syntheticPointerPosition = null;
+        quickMenuState.syntheticRayOrigin = null;
+        quickMenuState.syntheticRayDirection = null;
+      }
+    }
+
+    function handleSyntheticMenuToggle() {
+      toggleSpatialMenusVisible();
+    }
+
+    function handleSyntheticRecordToggle() {
+      toggleCropWorkflowFromController("SYNTHETIC RECORD TOGGLE");
+    }
+
     function readRightThumbstickYAxis() {
       if (thumbstickOverrideState.right.active) {
         return thumbstickOverrideState.right.y;
@@ -1110,6 +1827,85 @@ export function ThreeOfficialInteractiveLab() {
       return 0;
     }
 
+    function readRightQuickMenuButtonState() {
+      const session = renderer.xr.getSession();
+      if (!session) {
+        return { anchor: grip2 as Object3D, pressed: false };
+      }
+
+      const inputSources = Array.from(session.inputSources);
+      for (const [index, inputSource] of inputSources.entries()) {
+        if (inputSource.handedness !== "right") {
+          continue;
+        }
+
+        return {
+          anchor: quickMenuGripAnchors[index] ?? grip2,
+          pressed: Boolean(inputSource.gamepad?.buttons?.[QUICK_MENU_BUTTON_INDEX]?.pressed)
+        };
+      }
+
+      return { anchor: grip2 as Object3D, pressed: false };
+    }
+
+    function readLeftMenuButtonPressed() {
+      const session = renderer.xr.getSession();
+      if (!session) {
+        return false;
+      }
+
+      for (const inputSource of Array.from(session.inputSources)) {
+        if (inputSource.handedness !== "left") {
+          continue;
+        }
+
+        return Boolean(inputSource.gamepad?.buttons?.[LEFT_MENU_BUTTON_INDEX]?.pressed);
+      }
+
+      return false;
+    }
+
+    function tickQuickMenuButton() {
+      const { anchor, pressed } = readRightQuickMenuButtonState();
+      if (leftGripModifierRef.current) {
+        if (pressed && !quickMenuState.recordToggleButtonDown) {
+          toggleCropWorkflowFromController("LEFT GRIP + RIGHT B");
+        }
+        quickMenuState.recordToggleButtonDown = pressed;
+        quickMenuState.lastButtonDown = pressed;
+        if (quickMenuActiveRef.current) {
+          closeQuickMenu(false);
+        }
+        return;
+      }
+
+      if (!spatialMenusVisibleRef.current) {
+        quickMenuState.recordToggleButtonDown = false;
+        quickMenuState.lastButtonDown = pressed;
+        return;
+      }
+
+      quickMenuState.recordToggleButtonDown = false;
+      if (pressed && !quickMenuState.lastButtonDown) {
+        openQuickMenu(anchor);
+      }
+      if (pressed) {
+        updateQuickMenuSelection(anchor);
+      }
+      if (!pressed && quickMenuState.lastButtonDown) {
+        closeQuickMenu(true);
+      }
+      quickMenuState.lastButtonDown = pressed;
+    }
+
+    function tickLeftMenuButton() {
+      const pressed = readLeftMenuButtonPressed();
+      if (pressed && !leftMenuButtonState.lastButtonDown) {
+        toggleSpatialMenusVisible();
+      }
+      leftMenuButtonState.lastButtonDown = pressed;
+    }
+
     function tickThumbstickControls(now: number) {
       const dtSeconds = Math.min(0.05, Math.max(0, (now - thumbstickFovState.lastFrameAt) / 1000));
       thumbstickFovState.lastFrameAt = now;
@@ -1118,10 +1914,16 @@ export function ThreeOfficialInteractiveLab() {
       const magnitude = Math.abs(yAxis);
       if (magnitude > FOV_THUMBSTICK_DEADZONE) {
         const normalized = (magnitude - FOV_THUMBSTICK_DEADZONE) / (1 - FOV_THUMBSTICK_DEADZONE);
+        if (controllerDiscardState.active) {
+          thumbstickFovState.active = false;
+          thumbstickFovState.lastInputAt = now;
+          return;
+        }
         if (leftGripModifierRef.current) {
           const deltaOpacity = Math.sign(yAxis) * normalized * MASK_OPACITY_THUMBSTICK_MAX_PER_SECOND * dtSeconds;
           if (Math.abs(deltaOpacity) >= 0.001) {
             const nextOpacity = setMaskOpacityValue(maskOpacityRef.current + deltaOpacity);
+            setUiModeValue("OPACITY", false);
             setLastAction(`LEFT GRIP + RIGHT STICK: mask opacity ${nextOpacity.toFixed(2)}.`);
           }
           thumbstickFovState.active = false;
@@ -1133,10 +1935,12 @@ export function ThreeOfficialInteractiveLab() {
         const deltaH = signedVelocity * dtSeconds;
         if (Math.abs(deltaH) >= 0.01) {
           const nextFov = setFovValue(fovRef.current + deltaH, { type: "nudgeFov", deltaH: Number(deltaH.toFixed(2)) });
+          setUiModeValue("FOV", true);
           thumbstickFovState.active = true;
           thumbstickFovState.lastInputAt = now;
           thumbstickFovState.pendingFlush = true;
-          setLastAction(`RIGHT STICK HOLD: FOV ${deltaH < 0 ? "in" : "out"} to ${nextFov.toFixed(1)}.`);
+          const sourceLabel = followModeRef.current === "controller_ray" ? "RIGHT GRIP DRAG + RIGHT STICK" : "RIGHT STICK HOLD";
+          setLastAction(`${sourceLabel}: FOV ${deltaH < 0 ? "in" : "out"} to ${nextFov.toFixed(1)}.`);
         }
         return;
       }
@@ -1149,6 +1953,7 @@ export function ThreeOfficialInteractiveLab() {
       if (thumbstickFovState.pendingFlush && now - thumbstickFovState.lastInputAt >= FOV_FLUSH_DEBOUNCE_MS) {
         thumbstickFovState.pendingFlush = false;
         emitSemantic({ type: "flushPath", reason: "fov" });
+        setUiModeValue(lockedRef.current ? "LOCKED" : "IDLE", false);
         setLastAction(`RIGHT STICK RELEASE: FOV committed at ${fovRef.current.toFixed(1)}.`);
       }
     }
@@ -1156,6 +1961,9 @@ export function ThreeOfficialInteractiveLab() {
     window.addEventListener("three-official-controller-select", handleSyntheticControllerSelect as EventListener);
     window.addEventListener("three-official-controller-aim", handleSyntheticControllerAim as EventListener);
     window.addEventListener("three-official-controller-squeeze", handleSyntheticControllerSqueeze as EventListener);
+    window.addEventListener("three-official-quick-menu", handleSyntheticQuickMenu as EventListener);
+    window.addEventListener("three-official-menu-toggle", handleSyntheticMenuToggle as EventListener);
+    window.addEventListener("three-official-record-toggle", handleSyntheticRecordToggle as EventListener);
     window.addEventListener("three-official-thumbstick", handleSyntheticThumbstick as EventListener);
     renderer.domElement.addEventListener("pointerdown", handleCanvasPointerDown);
     renderer.domElement.addEventListener("pointerup", handleCanvasPointerUp);
@@ -1171,10 +1979,6 @@ export function ThreeOfficialInteractiveLab() {
 
     window.addEventListener("resize", resize);
     renderer.setAnimationLoop((time) => {
-      if (popupMesh) {
-        popupMesh.visible = popupSource.dataset.open === "true";
-      }
-
       if (
         pendingHeadGazeStartedAt !== null &&
         followModeRef.current === "idle" &&
@@ -1200,6 +2004,8 @@ export function ThreeOfficialInteractiveLab() {
         }
       }
 
+      tickLeftMenuButton();
+      tickQuickMenuButton();
       tickThumbstickControls(performance.now());
 
       const pose = viewTargetRef.current;
@@ -1212,12 +2018,90 @@ export function ThreeOfficialInteractiveLab() {
 
       viewTargetToDirection(pose, markerDirection);
       camera.getWorldPosition(cameraPosition);
-      targetReticle.position.copy(cameraPosition).add(markerPosition.copy(markerDirection).multiplyScalar(2.05));
+      cropMask.getWorldPosition(sphereCenter);
+      frameDirection
+        .copy(sphereCenter)
+        .add(markerPosition.copy(markerDirection).multiplyScalar(CROP_MASK_RADIUS))
+        .sub(cameraPosition)
+        .normalize();
+      targetReticle.position.copy(cameraPosition).add(markerPosition.copy(frameDirection).multiplyScalar(2.05));
       targetReticle.lookAt(cameraPosition);
       targetReticle.scale.setScalar(followModeRef.current === "idle" ? 1 : 1.22);
       reticleMaterial?.color.set(lockedRef.current ? 0x00ffff : followModeRef.current === "controller_ray" ? 0xff9900 : 0xff00ff);
       if (reticleMaterial) {
         reticleMaterial.opacity = followModeRef.current === "idle" ? 0.86 : 1;
+      }
+
+      const frameHorizontalFovRad = fovRef.current * DEG_TO_RAD;
+      const frameVerticalFovRad = verticalFovFromHorizontal(fovRef.current) * DEG_TO_RAD;
+      const frameWidth = 2 * CROP_FRAME_DISTANCE * Math.tan(frameHorizontalFovRad / 2);
+      const frameHeight = 2 * CROP_FRAME_DISTANCE * Math.tan(frameVerticalFovRad / 2);
+      const frameHandleSize = clampNumber(Math.min(frameWidth, frameHeight) * 0.055, 0.04, 0.08);
+      cropFrame.position.copy(cameraPosition).add(markerPosition.copy(frameDirection).multiplyScalar(CROP_FRAME_DISTANCE));
+      cropFrame.lookAt(cameraPosition);
+      cropFrame.scale.setScalar(1);
+      frameTop.position.y = frameHeight / 2;
+      frameBottom.position.y = -frameHeight / 2;
+      frameLeft.position.x = -frameWidth / 2;
+      frameRight.position.x = frameWidth / 2;
+      frameTop.scale.set(frameWidth, 1, 1);
+      frameBottom.scale.set(frameWidth, 1, 1);
+      frameLeft.scale.set(frameHeight, 1, 1);
+      frameRight.scale.set(frameHeight, 1, 1);
+      for (let index = 0; index < cropFrameHandles.length; index += 1) {
+        const x = index % 2 === 0 ? -frameWidth / 2 : frameWidth / 2;
+        const y = index < 2 ? frameHeight / 2 : -frameHeight / 2;
+        const handle = cropFrameHandles[index];
+        handle.position.set(x, y, 0.002);
+        handle.scale.setScalar(frameHandleSize / 0.075);
+      }
+      const cropFrameActive = uiModeRef.current === "AIM" || uiModeRef.current === "DRAG" || uiModeRef.current === "GAZE";
+      cropFrame.visible = cropFrameActive;
+      if (cropFrameMaterial) {
+        cropFrameMaterial.color.set(
+          uiModeRef.current === "DRAG"
+            ? 0xff9900
+            : uiModeRef.current === "GAZE"
+              ? 0xff00ff
+              : uiModeRef.current === "AIM"
+                ? 0xffff66
+                : 0x00ffff
+        );
+        cropFrameMaterial.opacity = cropFrameActive ? (uiModeRef.current === "DRAG" ? 0.92 : 0.56) : 0;
+      }
+      if (cropFrameHandleMaterial) {
+        cropFrameHandleMaterial.opacity = uiModeRef.current === "DRAG" ? 0.9 : 0;
+      }
+
+      if (targetRingPose && targetRingMaterial && performance.now() <= targetRingVisibleUntil) {
+        viewTargetToDirection(targetRingPose, direction);
+        targetRing.visible = true;
+        targetRing.position.copy(cameraPosition).add(markerPosition.copy(direction).multiplyScalar(2.14));
+        targetRing.lookAt(cameraPosition);
+        targetRing.scale.setScalar(1 + Math.sin(time * 0.012) * 0.08);
+        targetRingMaterial.opacity = 0.92;
+      } else if (targetRingMaterial) {
+        targetRing.visible = false;
+        targetRingMaterial.opacity = 0;
+      }
+
+      const menusVisible = spatialMenusVisibleRef.current;
+      playerGlow.visible = menusVisible;
+      workbenchLayerGroup.visible = menusVisible;
+      if (playerMesh) {
+        playerMesh.visible = menusVisible;
+      }
+      if (htmlMesh) {
+        htmlMesh.visible = menusVisible;
+      }
+      if (statusMesh) {
+        statusMesh.visible = menusVisible;
+      }
+      if (!menusVisible) {
+        quickMenuGroup.visible = false;
+      }
+      if (popupMesh) {
+        popupMesh.visible = menusVisible && Boolean(openModuleRef.current);
       }
 
       renderer.render(scene, camera);
@@ -1229,6 +2113,9 @@ export function ThreeOfficialInteractiveLab() {
       window.removeEventListener("three-official-controller-select", handleSyntheticControllerSelect as EventListener);
       window.removeEventListener("three-official-controller-aim", handleSyntheticControllerAim as EventListener);
       window.removeEventListener("three-official-controller-squeeze", handleSyntheticControllerSqueeze as EventListener);
+      window.removeEventListener("three-official-quick-menu", handleSyntheticQuickMenu as EventListener);
+      window.removeEventListener("three-official-menu-toggle", handleSyntheticMenuToggle as EventListener);
+      window.removeEventListener("three-official-record-toggle", handleSyntheticRecordToggle as EventListener);
       window.removeEventListener("three-official-thumbstick", handleSyntheticThumbstick as EventListener);
       renderer.domElement.removeEventListener("pointerdown", handleCanvasPointerDown);
       renderer.domElement.removeEventListener("pointerup", handleCanvasPointerUp);
@@ -1238,8 +2125,22 @@ export function ThreeOfficialInteractiveLab() {
       htmlMesh?.dispose?.();
       playerMesh?.dispose?.();
       popupMesh?.dispose?.();
+      statusMesh?.dispose?.();
       cropMaskGeometry?.dispose();
       cropMaskMaterial?.dispose();
+      cropFrameBarGeometry?.dispose();
+      cropFrameHandleGeometry?.dispose();
+      cropFrameMaterial?.dispose();
+      cropFrameHandleMaterial?.dispose();
+      targetRingGeometry?.dispose();
+      targetRingMaterial?.dispose();
+      quickMenuTileGeometry.dispose();
+      for (const tile of quickMenuTiles) {
+        tile.activeMaterial.map?.dispose();
+        tile.activeMaterial.dispose();
+        tile.inactiveMaterial.map?.dispose();
+        tile.inactiveMaterial.dispose();
+      }
       reticleGeometry?.dispose();
       reticleMaterial?.dispose();
       video.pause();
@@ -1258,6 +2159,13 @@ export function ThreeOfficialInteractiveLab() {
     let disposed = false;
 
     async function loadVideoSources() {
+      if (initialSources?.length) {
+        setVideoSources(initialSources);
+        setVideoIndex((index) => Math.min(index, initialSources.length - 1));
+        setLastAction(`PLAYER: ${initialSources.length} backend video${initialSources.length === 1 ? "" : "s"} loaded for playlist selector.`);
+        return;
+      }
+
       try {
         const response = await fetch("/api/xr/video-sources", { cache: "no-store" });
         if (!response.ok) {
@@ -1283,7 +2191,7 @@ export function ThreeOfficialInteractiveLab() {
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [initialSources]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1306,6 +2214,7 @@ export function ThreeOfficialInteractiveLab() {
     video.load();
 
     setPlaybackStatus("loading");
+    currentTimeMsRef.current = 0;
     setCurrentTimeMs(0);
     setDurationMs(source.durationMs ?? 0);
 
@@ -1335,13 +2244,28 @@ export function ThreeOfficialInteractiveLab() {
       video.load();
     }
 
-    setLastAction(`PLAYER: loaded ${source.title}.`);
+    setLastAction(
+      initialSources?.length ? `PLAYER: loaded ${source.title} from backend playlist.` : `PLAYER: loaded ${source.title}.`
+    );
 
     return () => {
       disposed = true;
       hls?.destroy();
     };
-  }, [currentVideoSource]);
+  }, [currentVideoSource, initialSources?.length]);
+
+  useEffect(() => {
+    if (!backendBinding) {
+      return;
+    }
+
+    const newVideoId = videoSources[videoIndex]?.id;
+    if (newVideoId && newVideoId !== backendBinding.videoId) {
+      void updateCutSessionVideo(backendBinding.sessionId, newVideoId).catch((error) => {
+        console.error("Failed to update session video:", error);
+      });
+    }
+  }, [videoIndex, videoSources, backendBinding]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1363,7 +2287,9 @@ export function ThreeOfficialInteractiveLab() {
     }
 
     function updateTime() {
-      setCurrentTimeMs(Math.max(0, Math.round(currentVideo.currentTime * 1000)));
+      const nextTimeMs = Math.max(0, Math.round(currentVideo.currentTime * 1000));
+      currentTimeMsRef.current = nextTimeMs;
+      setCurrentTimeMs(nextTimeMs);
     }
 
     function updatePlaying() {
@@ -1397,9 +2323,10 @@ export function ThreeOfficialInteractiveLab() {
 
   useEffect(() => {
     const player = playerRef.current;
-    const source = sourceRef.current;
     const popup = popupRef.current;
-    if (!player || !source || !popup) {
+    const source = sourceRef.current;
+    const workflowState = workflowStateRef.current;
+    if (!player || !popup || !source || !workflowState) {
       return;
     }
 
@@ -1410,8 +2337,8 @@ export function ThreeOfficialInteractiveLab() {
 
       if (module) {
         setMode(module);
-        setOpenModule((current) => (current === module ? module : module));
-        setLastAction(`${module}: extension HTMLMesh opened from native DOM click.`);
+        setOpenModule((current) => (current === module ? null : module));
+        setLastAction(`${module}: extension HTMLMesh toggled from native DOM click.`);
         return;
       }
 
@@ -1435,8 +2362,62 @@ export function ThreeOfficialInteractiveLab() {
         return;
       }
 
+      if (action === "BGM_AMBIENT") {
+        selectBgm("ambient-pulse");
+        return;
+      } else if (action === "BGM_KICK") {
+        selectBgm("kick-guide");
+        return;
+      } else if (action === "BGM_NONE") {
+        selectBgm("none");
+        return;
+      } else if (action === "BGM_PREVIEW") {
+        toggleBgmPreview();
+        return;
+      } else if (action === "EFFECT_BLACK") {
+        createWorkflowEffect("effectBlack");
+        return;
+      } else if (action === "EFFECT_WHITE") {
+        createWorkflowEffect("effectWhite");
+        return;
+      } else if (action === "EFFECT_VHS") {
+        createWorkflowEffect("effectVhs");
+        return;
+      }
+
       if (action === "CUT") {
         emitSemantic({ type: "cutHere" });
+      } else if (action === "FOV_IN") {
+        setFovValue(fovRef.current - 5, { type: "nudgeFov", deltaH: -5 });
+        emitSemantic({ type: "flushPath", reason: "fov" });
+        setLastAction("FOV: panel pushed the viewfinder in.");
+        return;
+      } else if (action === "FOV_OUT") {
+        setFovValue(fovRef.current + 5, { type: "nudgeFov", deltaH: 5 });
+        emitSemantic({ type: "flushPath", reason: "fov" });
+        setLastAction("FOV: panel pulled the viewfinder out.");
+        return;
+      } else if (action === "YAW_LEFT") {
+        nudgeViewTarget(-5, 0, "PANEL YAW LEFT");
+        return;
+      } else if (action === "YAW_RIGHT") {
+        nudgeViewTarget(5, 0, "PANEL YAW RIGHT");
+        return;
+      } else if (action === "PITCH_UP") {
+        nudgeViewTarget(0, 5, "PANEL PITCH UP");
+        return;
+      } else if (action === "PITCH_DOWN") {
+        nudgeViewTarget(0, -5, "PANEL PITCH DOWN");
+        return;
+      } else if (action === "START_CROP") {
+        startCropWorkflow();
+        return;
+      } else if (action === "END_CROP") {
+        void endCropWorkflow();
+        return;
+      } else if (action === "RENDER") {
+        void renderCropWorkflow();
+        return;
       } else if (action === "PLAY") {
         void toggleVideoPlayback("PLAY");
         return;
@@ -1457,39 +2438,22 @@ export function ThreeOfficialInteractiveLab() {
       setLastAction(actionMessage(action, fov, locked));
     }
 
-    function handlePopupClick(event: Event) {
+    function handleWorkflowClick(event: Event) {
       const target = event.currentTarget as HTMLButtonElement;
-      const action = target.dataset.popupAction;
+      const action = target.dataset.workflowAction;
 
-      if (action === "close") {
-        setOpenModule(null);
-        setLastAction("CLOSE: extension HTMLMesh hidden.");
-      } else if (action === "prev") {
-        setEffectPage(0);
-        setLastAction("FX page 1 selected in 45 degree HTMLMesh.");
-      } else if (action === "next") {
-        setEffectPage(1);
-        setLastAction("FX page 2 selected in 45 degree HTMLMesh.");
-      } else if (action === "fovMinus") {
-        setFovValue(fovRef.current - 4, { type: "nudgeFov", deltaH: -4 });
-        emitSemantic({ type: "flushPath", reason: "fov" });
-        setLastAction("FOV- from extension HTMLMesh.");
-      } else if (action === "fovPlus") {
-        setFovValue(fovRef.current + 4, { type: "nudgeFov", deltaH: 4 });
-        emitSemantic({ type: "flushPath", reason: "fov" });
-        setLastAction("FOV+ from extension HTMLMesh.");
-      } else if (action) {
-        emitSemantic({
-          type: "createEffectEvent",
-          displayName: action.toUpperCase(),
-          durationMs: 800,
-          effectType: action === "fade" ? "transition.fade_black" : "highlight",
-          params: {
-            source: "three-official-interactive-lab"
-          }
-        });
-        setLastAction(`${action.toUpperCase()}: popup option committed from HTMLMesh.`);
+      if (action === "startCrop") {
+        startCropWorkflow();
+      } else if (action === "endCrop") {
+        void endCropWorkflow();
+      } else if (action === "renderCrop") {
+        void renderCropWorkflow();
       }
+    }
+
+    function handlePopupClose() {
+      setOpenModule(null);
+      setLastAction("MODULE: raised popup layer closed.");
     }
 
     function handlePlayerClick(event: Event) {
@@ -1503,24 +2467,36 @@ export function ThreeOfficialInteractiveLab() {
         void toggleVideoPlayback("PLAYER BUTTON");
       } else if (action === "PREV") {
         setVideoIndex((index) => (videoSources.length ? (index - 1 + videoSources.length) % videoSources.length : 0));
-        setLastAction("PLAYER: previous video selected from vertical HTMLMesh.");
+        setLastAction("PLAYER: previous video selected from HTMLMesh.");
       } else if (action === "NEXT") {
         setVideoIndex((index) => (videoSources.length ? (index + 1) % videoSources.length : 0));
-        setLastAction("PLAYER: next video selected from vertical HTMLMesh.");
+        setLastAction("PLAYER: next video selected from HTMLMesh.");
       } else if (action === "RATE_0_5") {
         setVideoRate(0.5);
       } else if (action === "RATE_1") {
         setVideoRate(1);
       } else if (action === "RATE_2") {
         setVideoRate(2);
+      } else if (action === "RECORD_TOGGLE") {
+        if (cropWorkflowStatusRef.current === "recording") {
+          void endCropWorkflow();
+        } else {
+          startCropWorkflow();
+        }
+      } else if (action === "RECORD_RATE_DOWN") {
+        setRecordingRateValue(recordingRate - 0.25);
+      } else if (action === "RECORD_RATE_UP") {
+        setRecordingRateValue(recordingRate + 0.25);
+      } else if (action === "RECORD_RATE_RESET") {
+        setRecordingRateValue(1);
       } else if (action === "TOGGLE_UI") {
         setPlayerUiVisible((visible) => !visible);
-        setLastAction("PLAYER: vertical panel prominence toggled.");
+        setLastAction("PLAYER: panel prominence toggled.");
       } else if (action === "SELECT_SOURCE") {
         const nextIndex = Number(target.dataset.sourceIndex);
         if (Number.isInteger(nextIndex)) {
           setVideoIndex(Math.max(0, Math.min(nextIndex, videoSources.length - 1)));
-          setLastAction("PLAYER: source selected from vertical HTMLMesh list.");
+          setLastAction("PLAYER: source selected from HTMLMesh list.");
         }
       }
     }
@@ -1528,6 +2504,11 @@ export function ThreeOfficialInteractiveLab() {
     function handleInput(event: Event) {
       const target = event.currentTarget as HTMLInputElement;
       const next = Number(target.value);
+      if (target.dataset.control === "mask-opacity") {
+        setMaskOpacityValue(next);
+        setLastAction(`MASK: panel opacity set to ${next.toFixed(2)}.`);
+        return;
+      }
       setFovValue(next, { type: "setFov", h: next });
       setLastAction(actionMessage("FOV", next, locked));
     }
@@ -1542,762 +2523,124 @@ export function ThreeOfficialInteractiveLab() {
       seekVideoTo(nextTimeMs);
     }
 
-    const buttons = Array.from(source.querySelectorAll<HTMLButtonElement>("button[data-action], button[data-module]"));
+    function handlePlayerSelect(event: Event) {
+      const target = event.currentTarget as HTMLSelectElement;
+      if (target.dataset.playerControl !== "source-select") {
+        return;
+      }
+
+      const nextIndex = videoSources.findIndex((sourceItem) => sourceItem.id === target.value);
+      if (nextIndex >= 0) {
+        setVideoIndex(nextIndex);
+        setLastAction("PLAYER: source selected from backend playlist.");
+      }
+    }
+
+    const buttons = Array.from(
+      source.querySelectorAll<HTMLButtonElement>("button[data-action], button[data-module]")
+    ).concat(Array.from(popup.querySelectorAll<HTMLButtonElement>("button[data-action], button[data-module]")));
+    const popupCloseButtons = Array.from(popup.querySelectorAll<HTMLButtonElement>("button[data-popup-close]"));
     const playerButtons = Array.from(player.querySelectorAll<HTMLButtonElement>("button[data-player-action]"));
-    const popupButtons = Array.from(popup.querySelectorAll<HTMLButtonElement>("button[data-popup-action]"));
+    const workflowButtons = Array.from(workflowState.querySelectorAll<HTMLButtonElement>("button[data-workflow-action]"));
     const playerSeek = player.querySelector<HTMLInputElement>('input[data-player-control="seek"]');
-    const slider = source.querySelector<HTMLInputElement>('input[data-control="fov"]');
+    const playerSourceSelect = player.querySelector<HTMLSelectElement>('select[data-player-control="source-select"]');
+    const sliders = Array.from(source.querySelectorAll<HTMLInputElement>('input[data-control="fov"], input[data-control="mask-opacity"]'));
     buttons.forEach((button) => button.addEventListener("click", handleClick));
+    popupCloseButtons.forEach((button) => button.addEventListener("click", handlePopupClose));
     playerButtons.forEach((button) => button.addEventListener("click", handlePlayerClick));
-    popupButtons.forEach((button) => button.addEventListener("click", handlePopupClick));
+    workflowButtons.forEach((button) => button.addEventListener("click", handleWorkflowClick));
     playerSeek?.addEventListener("input", handlePlayerInput);
-    slider?.addEventListener("input", handleInput);
+    playerSourceSelect?.addEventListener("change", handlePlayerSelect);
+    sliders.forEach((slider) => slider.addEventListener("input", handleInput));
 
     return () => {
       buttons.forEach((button) => button.removeEventListener("click", handleClick));
+      popupCloseButtons.forEach((button) => button.removeEventListener("click", handlePopupClose));
       playerButtons.forEach((button) => button.removeEventListener("click", handlePlayerClick));
-      popupButtons.forEach((button) => button.removeEventListener("click", handlePopupClick));
+      workflowButtons.forEach((button) => button.removeEventListener("click", handleWorkflowClick));
       playerSeek?.removeEventListener("input", handlePlayerInput);
-      slider?.removeEventListener("input", handleInput);
+      playerSourceSelect?.removeEventListener("change", handlePlayerSelect);
+      sliders.forEach((slider) => slider.removeEventListener("input", handleInput));
     };
-  }, [durationMs, fov, locked, videoSources.length]);
+  }, [bgmChoice, cropWorkflowStatus, durationMs, fov, locked, openModule, recordingRate, videoSources]);
 
   const seekPercent = durationMs > 0 ? Math.min(100, Math.max(0, Math.round((currentTimeMs / durationMs) * 100))) : 0;
   const playbackButtonText = playbackStatus === "playing" ? "PAUSE" : "PLAY";
+  const cropExportDownloadUrl = cropExportId ? apiUrl(`/api/exports/${cropExportId}/download`) : "#";
 
   return (
     <main className="three-official-lab-page">
       <section className="three-official-stage" data-testid="three-official-interactive-lab">
         <div ref={mountRef} className="three-official-mount" />
-        <div className="three-official-hud">
-          <p>Three.js official pattern</p>
-          <h1>HTMLMesh + InteractiveGroup + Crop Mask</h1>
-          <span data-testid="three-official-last-action">{lastAction}</span>
-          <span data-testid="three-official-last-semantic">{lastSemantic}</span>
-          <span data-testid="three-official-playback-status">
-            sphere player: {playbackStatus} / {formatClock(currentTimeMs)} / {formatClock(durationMs)}
-          </span>
-          <span data-testid="three-official-view-target">
-            viewfinder: {followMode} / {viewTarget.input} / yaw {viewTarget.yaw.toFixed(1)} / pitch {viewTarget.pitch.toFixed(1)} / FOV {fov}
-          </span>
-          <span data-testid="three-official-mask-opacity">
-            mask opacity: {maskOpacity.toFixed(2)} / left grip modifier {leftGripModifier ? "on" : "off"}
-          </span>
-        </div>
+        <ThreeOfficialLabHud
+          backendStatus={backendStatus}
+          cropExportId={cropExportId}
+          cropWorkflowStatus={cropWorkflowStatus}
+          currentTimeMs={currentTimeMs}
+          durationMs={durationMs}
+          followMode={followMode}
+          fov={fov}
+          lastAction={lastAction}
+          lastSemantic={lastSemantic}
+          leftGripModifier={leftGripModifier}
+          maskOpacity={maskOpacity}
+          playbackStatus={playbackStatus}
+          quickMenuActive={quickMenuActive}
+          quickMenuSelection={quickMenuSelection}
+          recordingRate={recordingRate}
+          recordingSamplesCount={recordingSamples.length}
+          spatialMenusVisible={spatialMenusVisible}
+          viewTarget={viewTarget}
+        />
         <video ref={videoRef} className="three-official-video-source" data-testid="three-official-video-source" />
+        <div ref={statusRef} className="three-official-mode-strip" data-testid="three-official-mode-strip">
+          <ThreeOfficialModeStrip
+            followMode={followMode}
+            leftGripModifier={leftGripModifier}
+            locked={locked}
+            pendingEdit={pendingEdit}
+            uiMode={uiMode}
+          />
+        </div>
         <div
           ref={playerRef}
           className="three-official-player-ui"
           data-testid="three-official-player-ui"
           data-visible={playerUiVisible ? "true" : "false"}
         >
-          <div className="three-official-player-chrome">
-            <span className="three-official-player-dot magenta" />
-            <span className="three-official-player-dot cyan" />
-            <span className="three-official-player-dot orange" />
-            <strong>PLAYBACK CORE</strong>
-            <span data-testid="three-official-player-status-strip">{playbackStatus.toUpperCase()}</span>
-          </div>
-          <section className="three-official-player-progress">
-            <span>{formatClock(currentTimeMs)}</span>
-            <input
-              aria-label="Playback progress"
-              data-player-control="seek"
-              data-testid="three-official-player-progress"
-              max="100"
-              min="0"
-              readOnly
-              type="range"
-              value={seekPercent}
-            />
-            <span>{formatClock(durationMs)}</span>
-          </section>
-          <section className="three-official-player-transport">
-            <button data-player-action="PREV" type="button">
-              <span>PREV</span>
-            </button>
-            <button className="primary" data-player-action="PLAY_TOGGLE" type="button">
-              <strong>{playbackButtonText}</strong>
-              <span>both select</span>
-            </button>
-            <button data-player-action="NEXT" type="button">
-              <span>NEXT</span>
-            </button>
-          </section>
-          <section className="three-official-player-now">
-            <p>&gt; SOURCE</p>
-            <h2>{currentVideoSource.title}</h2>
-            <span>
-              {currentVideoSource.resolution ?? "360 VIDEO"} / {currentVideoSource.kind.toUpperCase()} / play {playbackRate}x
-            </span>
-          </section>
-          <section className="three-official-player-rates">
-            <button className={playbackRate === 0.5 ? "active" : ""} data-player-action="RATE_0_5" type="button">
-              Play 0.5x
-            </button>
-            <button className={playbackRate === 1 ? "active" : ""} data-player-action="RATE_1" type="button">
-              Play 1x
-            </button>
-            <button className={playbackRate === 2 ? "active" : ""} data-player-action="RATE_2" type="button">
-              Play 2x
-            </button>
-          </section>
-          <section className="three-official-player-list">
-            <p>&gt; PLAYLIST</p>
-            {videoSources.slice(0, 3).map((source, index) => (
-              <button
-                className={index === videoIndex ? "active" : ""}
-                data-player-action="SELECT_SOURCE"
-                data-source-index={index}
-                key={source.id}
-                type="button"
-              >
-                <strong>{index + 1}. {source.title}</strong>
-                <span>
-                  {formatClock(source.durationMs ?? 0)} / {source.resolution ?? "360"}
-                </span>
-              </button>
-            ))}
-          </section>
-          <button className="three-official-player-hide" data-player-action="TOGGLE_UI" type="button">
-            {playerUiVisible ? "DIM PLAYER UI" : "RESTORE PLAYER UI"}
-          </button>
+          <ThreeOfficialPlayerPanel
+            cropWorkflowStatus={cropWorkflowStatus}
+            currentTimeMs={currentTimeMs}
+            currentVideoSource={currentVideoSource}
+            durationMs={durationMs}
+            playbackButtonText={playbackButtonText}
+            playbackRate={playbackRate}
+            playbackStatus={playbackStatus}
+            playerUiVisible={playerUiVisible}
+            recordingRate={recordingRate}
+            seekPercent={seekPercent}
+            videoIndex={videoIndex}
+            videoSources={videoSources}
+          />
         </div>
-        <div ref={sourceRef} className="three-official-source-ui" data-testid="three-official-source-ui">
-          <div className="three-official-panel-chrome">
-            <span />
-            <span />
-            <span />
-            <strong>QUEST EDIT DESK // HTMLMESH</strong>
-          </div>
-          <div className="three-official-panel-body">
-            <section className="three-official-direct">
-              <p>&gt; DIRECT KEYS</p>
-              <button className="three-official-orb" data-action="CUT" type="button">
-                <span className="three-official-orb-ring" />
-                <strong>CUT</strong>
-              </button>
-            </section>
-            <section className="three-official-direct-grid">
-              <button data-action="LOCK" type="button">
-                {locked ? "UNLOCK" : "LOCK"}
-              </button>
-              <button data-action="SAVE" type="button">
-                SAVE
-              </button>
-              <button data-action="PLAY" type="button">
-                PLAY
-              </button>
-              <button data-action="FLUSH" type="button">
-                FLUSH
-              </button>
-              <button data-action="DISCARD" type="button">
-                DISCARD
-              </button>
-              <button data-action="RESTORE" type="button">
-                RESTORE
-              </button>
-            </section>
-            <section className="three-official-modules">
-              <p>&gt; MODULE STRIP</p>
-              <div className="three-official-module-grid">
-                {(["FRAME", "FOV", "FX", "EXPORT", "SESSION", "SAMPLER"] as const).map((module) => (
-                  <button className={openModule === module ? "active" : ""} data-module={module} key={module} type="button">
-                    {module}
-                  </button>
-                ))}
-              </div>
-              <label className="three-official-slider">
-                <span>FOV {fov}</span>
-                <input data-control="fov" max="112" min="48" type="range" value={fov} readOnly />
-              </label>
-              <div className="three-official-readout">
-                <span>MODE</span>
-                <strong>{mode}</strong>
-                <span>VIDEO</span>
-                <strong>{playbackStatus}</strong>
-                <span>LOCK</span>
-                <strong>{locked ? "ON" : "OFF"}</strong>
-                <span>MASK</span>
-                <strong>{maskOpacity.toFixed(2)}</strong>
-                <span>POSE</span>
-                <strong>
-                  {viewTarget.yaw.toFixed(0)}/{viewTarget.pitch.toFixed(0)}
-                </strong>
-              </div>
-            </section>
-          </div>
-        </div>
-        <div
-          ref={popupRef}
-          className="three-official-popup-ui"
-          data-open={openModule ? "true" : "false"}
-          data-testid="three-official-popup-ui"
-        >
-          <div className="three-official-popup-title">
-            <strong>{openModule ?? "MODULE"} MORE</strong>
-            <span>45 DEGREE HTMLMESH EXTENSION</span>
-          </div>
-          <p>
-            {openModule === "FX"
-              ? effectPage === 0
-                ? "PAGE 1: BLACK / FADE / GLOW / NOTE"
-                : "PAGE 2: LUT / MARK / CAPTION / QUEUE"
-              : openModule === "FOV"
-                ? `CURRENT FOV ${fov}. CHANGE WITHOUT LEAVING VIEW.`
-                : `${openModule ?? "MODULE"} OPTIONS LIVE ON A SEPARATE INTERACTIVE PLANE.`}
-          </p>
-          <div className="three-official-popup-grid">
-            {openModule === "FOV" ? (
-              <>
-                <button data-popup-action="fovMinus" type="button">
-                  FOV-
-                </button>
-                <button data-popup-action="fovPlus" type="button">
-                  FOV+
-                </button>
-              </>
-            ) : (
-              <>
-                <button data-popup-action="prev" type="button">
-                  PREV
-                </button>
-                <button data-popup-action="next" type="button">
-                  NEXT
-                </button>
-                <button data-popup-action={effectPage === 0 ? "fade" : "mark"} type="button">
-                  {effectPage === 0 ? "FADE" : "MARK"}
-                </button>
-              </>
-            )}
-            <button data-popup-action="close" type="button">
-              CLOSE
-            </button>
-          </div>
-        </div>
+        <ThreeOfficialArwesWorkbenchDesk
+          backendAcceptedPoints={backendAcceptedPoints}
+          backendStatus={backendStatus}
+          cropExportDownloadUrl={cropExportDownloadUrl}
+          cropWorkflowStatus={cropWorkflowStatus}
+          deskRef={sourceRef}
+          fov={fov}
+          locked={locked}
+          maskOpacity={maskOpacity}
+          openModule={openModule}
+          playbackStatus={playbackStatus}
+          popupRef={popupRef}
+          recordingSamples={recordingSamples}
+          viewTarget={viewTarget}
+          workflowStateRef={workflowStateRef}
+        />
       </section>
-      <style jsx>{`
-        .three-official-lab-page {
-          min-height: 100vh;
-          overflow: hidden;
-          background: #070011;
-          color: #e0e0e0;
-          font-family: "Share Tech Mono", ui-monospace, Consolas, monospace;
-        }
-
-        .three-official-stage,
-        .three-official-mount {
-          position: relative;
-          width: 100vw;
-          height: 100vh;
-          overflow: hidden;
-        }
-
-        .three-official-mount :global(canvas) {
-          display: block;
-          width: 100%;
-          height: 100%;
-        }
-
-        .three-official-video-source {
-          position: fixed;
-          left: -12000px;
-          top: -12000px;
-          width: 1px;
-          height: 1px;
-          opacity: 0.01;
-          pointer-events: none;
-        }
-
-        .three-official-player-ui {
-          position: fixed;
-          left: -12000px;
-          top: 24px;
-          width: 330px;
-          height: 640px;
-          overflow: hidden;
-          border: 2px solid #00ffff;
-          background:
-            linear-gradient(132deg, rgba(255, 255, 255, 0.1), transparent 18%, rgba(255, 0, 255, 0.08)),
-            linear-gradient(145deg, rgba(26, 16, 60, 0.96), rgba(9, 0, 20, 0.98) 58%, rgba(10, 34, 72, 0.94));
-          box-shadow:
-            0 0 28px rgba(0, 255, 255, 0.34),
-            0 0 54px rgba(255, 0, 255, 0.18),
-            inset 0 0 26px rgba(0, 255, 255, 0.13);
-          color: #e0e0e0;
-          clip-path: polygon(18px 0, calc(100% - 24px) 0, 100% 18px, 100% calc(100% - 34px), calc(100% - 20px) 100%, 12px 100%, 0 calc(100% - 18px), 0 22px);
-          padding: 18px;
-        }
-
-        .three-official-player-ui[data-visible="false"] {
-          opacity: 0.46;
-        }
-
-        .three-official-player-chrome {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin: -18px -18px 14px;
-          min-height: 42px;
-          padding: 0 16px;
-          border-bottom: 1px solid rgba(0, 255, 255, 0.45);
-          background: linear-gradient(90deg, rgba(0, 255, 255, 0.16), rgba(255, 0, 255, 0.08));
-        }
-
-        .three-official-player-chrome strong {
-          margin-right: auto;
-          color: #00ffff;
-          font: 900 17px Orbitron, system-ui, sans-serif;
-          text-shadow: 0 0 12px rgba(0, 255, 255, 0.78);
-        }
-
-        .three-official-player-chrome span {
-          color: #ff9900;
-          font-size: 12px;
-          text-shadow: 0 0 10px rgba(255, 153, 0, 0.55);
-        }
-
-        .three-official-player-dot {
-          width: 9px;
-          height: 9px;
-          flex: 0 0 auto;
-          border-radius: 999px;
-          background: currentColor;
-          box-shadow: 0 0 10px currentColor;
-        }
-
-        .three-official-player-dot.magenta {
-          color: #ff00ff;
-        }
-
-        .three-official-player-dot.cyan {
-          color: #00ffff;
-        }
-
-        .three-official-player-dot.orange {
-          color: #ff9900;
-        }
-
-        .three-official-player-now,
-        .three-official-player-progress,
-        .three-official-player-list {
-          display: grid;
-          gap: 8px;
-          margin-bottom: 14px;
-          padding: 12px;
-          border: 1px solid rgba(255, 0, 255, 0.32);
-          background: linear-gradient(135deg, rgba(7, 0, 17, 0.56), rgba(0, 255, 255, 0.08));
-          box-shadow:
-            0 0 18px rgba(0, 255, 255, 0.13),
-            inset 0 1px 0 rgba(255, 255, 255, 0.12);
-          clip-path: polygon(12px 0, calc(100% - 10px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 14px) 100%, 0 100%, 0 14px);
-        }
-
-        .three-official-player-now p,
-        .three-official-player-list p {
-          margin: 0;
-          color: #00ffff;
-          font-size: 13px;
-          text-shadow: 0 0 8px rgba(0, 255, 255, 0.7);
-        }
-
-        .three-official-player-now h2 {
-          margin: 0;
-          overflow: hidden;
-          color: #fff;
-          font: 900 19px Orbitron, system-ui, sans-serif;
-          line-height: 1.16;
-          text-overflow: ellipsis;
-          text-shadow: 0 0 14px rgba(255, 0, 255, 0.45);
-          white-space: nowrap;
-        }
-
-        .three-official-player-now span,
-        .three-official-player-progress span,
-        .three-official-player-list button span {
-          color: #9fefff;
-          font-size: 12px;
-        }
-
-        .three-official-player-progress {
-          grid-template-columns: 42px 1fr 42px;
-          align-items: center;
-          margin-bottom: 12px;
-          padding: 10px;
-        }
-
-        .three-official-player-progress input {
-          width: 100%;
-          accent-color: #ff00ff;
-        }
-
-        .three-official-player-transport,
-        .three-official-player-rates {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 8px;
-          margin-bottom: 14px;
-        }
-
-        .three-official-player-transport button,
-        .three-official-player-rates button,
-        .three-official-player-list button,
-        .three-official-player-hide {
-          min-height: 40px;
-          border: 2px solid rgba(0, 255, 255, 0.68);
-          background: linear-gradient(135deg, rgba(7, 0, 17, 0.78), rgba(26, 16, 60, 0.8), rgba(0, 255, 255, 0.1));
-          color: #e0e0e0;
-          cursor: pointer;
-          font: 900 13px "Share Tech Mono", monospace;
-          text-shadow: 0 0 8px rgba(0, 255, 255, 0.52);
-          box-shadow:
-            0 0 16px rgba(0, 255, 255, 0.18),
-            inset 0 1px 0 rgba(255, 255, 255, 0.16);
-          clip-path: polygon(10px 0, calc(100% - 8px) 0, 100% 9px, 100% calc(100% - 10px), calc(100% - 11px) 100%, 0 100%, 0 10px);
-        }
-
-        .three-official-player-transport button {
-          display: grid;
-          place-items: center;
-        }
-
-        .three-official-player-transport button.primary {
-          gap: 2px;
-        }
-
-        .three-official-player-transport button.primary strong {
-          font-size: 15px;
-        }
-
-        .three-official-player-transport button.primary span {
-          color: #ffcf83;
-          font-size: 10px;
-          text-transform: uppercase;
-        }
-
-        .three-official-player-transport button.primary,
-        .three-official-player-rates button.active,
-        .three-official-player-list button.active {
-          border-color: #ff9900;
-          color: #fff;
-          background: linear-gradient(135deg, rgba(255, 153, 0, 0.36), rgba(255, 0, 255, 0.18), rgba(0, 255, 255, 0.12));
-          box-shadow:
-            0 0 20px rgba(255, 153, 0, 0.34),
-            inset 0 1px 0 rgba(255, 255, 255, 0.18);
-        }
-
-        .three-official-player-list {
-          max-height: 180px;
-          overflow: hidden;
-        }
-
-        .three-official-player-list button {
-          display: grid;
-          gap: 2px;
-          min-height: 46px;
-          overflow: hidden;
-          text-align: left;
-        }
-
-        .three-official-player-list button strong {
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .three-official-player-hide {
-          width: 100%;
-          border-color: rgba(255, 0, 255, 0.68);
-          background: linear-gradient(135deg, rgba(255, 0, 255, 0.2), rgba(7, 0, 17, 0.72), rgba(0, 255, 255, 0.12));
-        }
-
-        .three-official-player-transport button:hover,
-        .three-official-player-rates button:hover,
-        .three-official-player-list button:hover,
-        .three-official-player-hide:hover {
-          filter: brightness(1.24);
-        }
-
-        .three-official-hud {
-          position: absolute;
-          left: 18px;
-          top: 18px;
-          z-index: 4;
-          display: grid;
-          gap: 8px;
-          width: min(560px, calc(100vw - 36px));
-          padding: 14px;
-          border: 1px solid rgba(0, 255, 255, 0.55);
-          border-top: 2px solid #00ffff;
-          background: rgba(14, 4, 34, 0.78);
-          box-shadow: 0 0 32px rgba(0, 255, 255, 0.16);
-        }
-
-        .three-official-hud p,
-        .three-official-hud h1 {
-          margin: 0;
-        }
-
-        .three-official-hud h1 {
-          color: #fff;
-          font-family: "Orbitron", system-ui, sans-serif;
-          font-size: 22px;
-        }
-
-        .three-official-hud p,
-        .three-official-hud span {
-          color: #9fefff;
-          font-size: 12px;
-        }
-
-        .three-official-source-ui {
-          position: fixed;
-          left: -12000px;
-          top: 24px;
-          width: 1000px;
-          height: 300px;
-          overflow: hidden;
-          border: 2px solid #00ffff;
-          background:
-            linear-gradient(125deg, rgba(255, 255, 255, 0.1), transparent 18%, rgba(255, 0, 255, 0.1)),
-            linear-gradient(115deg, rgba(26, 16, 60, 0.96), rgba(7, 0, 17, 0.96) 52%, rgba(33, 16, 76, 0.96));
-          box-shadow:
-            0 0 22px rgba(0, 255, 255, 0.55),
-            inset 0 0 34px rgba(255, 0, 255, 0.14);
-          color: #e0e0e0;
-          clip-path: polygon(18px 0, calc(100% - 30px) 0, 100% 18px, 100% calc(100% - 34px), calc(100% - 18px) 100%, 12px 100%, 0 calc(100% - 18px), 0 18px);
-        }
-
-        .three-official-panel-chrome {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-          height: 38px;
-          padding: 0 22px;
-          border-bottom: 1px solid rgba(0, 255, 255, 0.4);
-          background: rgba(0, 255, 255, 0.08);
-        }
-
-        .three-official-panel-chrome span {
-          width: 11px;
-          height: 11px;
-          border-radius: 999px;
-          background: #ff00ff;
-          box-shadow: 0 0 12px currentColor;
-        }
-
-        .three-official-panel-chrome span:nth-child(2) {
-          background: #00ffff;
-        }
-
-        .three-official-panel-chrome span:nth-child(3) {
-          background: #ff9900;
-        }
-
-        .three-official-panel-chrome strong {
-          margin-left: auto;
-          color: #00ffff;
-          font-size: 18px;
-        }
-
-        .three-official-panel-body {
-          display: grid;
-          grid-template-columns: 190px 280px 1fr;
-          gap: 16px;
-          align-items: center;
-          height: 262px;
-          padding: 12px 28px 16px;
-        }
-
-        .three-official-direct,
-        .three-official-direct-grid,
-        .three-official-modules {
-          min-width: 0;
-        }
-
-        .three-official-direct p,
-        .three-official-modules p {
-          margin: 0 0 9px;
-          color: #00ffff;
-          font-size: 15px;
-          font-weight: 900;
-          text-shadow: 0 0 10px rgba(0, 255, 255, 0.72);
-        }
-
-        .three-official-orb {
-          position: relative;
-          display: grid;
-          width: 150px;
-          height: 142px;
-          place-items: center;
-          overflow: hidden;
-          border: 3px solid #ff9900;
-          border-radius: 999px;
-          background:
-            radial-gradient(circle, rgba(255, 255, 255, 0.12), transparent 46%),
-            conic-gradient(from 40deg, #ff9900, #ff00ff, #00ffff, #ff9900);
-          color: #fff;
-          cursor: pointer;
-          font: 900 34px Orbitron, system-ui, sans-serif;
-          text-shadow: 0 0 14px #ff00ff;
-          box-shadow:
-            0 0 26px rgba(255, 0, 255, 0.52),
-            inset 0 0 34px rgba(7, 0, 17, 0.9);
-        }
-
-        .three-official-orb-ring {
-          position: absolute;
-          inset: 18px;
-          border: 10px solid transparent;
-          border-left-color: rgba(0, 255, 255, 0.9);
-          border-right-color: rgba(255, 0, 255, 0.82);
-          border-radius: inherit;
-          filter: drop-shadow(0 0 12px rgba(0, 255, 255, 0.72));
-        }
-
-        .three-official-orb strong {
-          position: relative;
-          z-index: 1;
-        }
-
-        .three-official-direct-grid,
-        .three-official-module-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 8px;
-        }
-
-        .three-official-module-grid {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
-
-        .three-official-direct-grid button,
-        .three-official-module-grid button,
-        .three-official-slider,
-        .three-official-readout {
-          border: 2px solid rgba(0, 255, 255, 0.7);
-          background: rgba(7, 0, 17, 0.76);
-          color: #e0e0e0;
-          box-shadow:
-            0 0 14px rgba(0, 255, 255, 0.22),
-            inset 0 1px 0 rgba(255, 255, 255, 0.16);
-        }
-
-        .three-official-direct-grid button,
-        .three-official-module-grid button {
-          min-height: 36px;
-          cursor: pointer;
-          font: 900 16px "Share Tech Mono", monospace;
-          clip-path: polygon(10px 0, calc(100% - 8px) 0, 100% 9px, 100% calc(100% - 10px), calc(100% - 11px) 100%, 0 100%, 0 10px);
-        }
-
-        .three-official-module-grid button.active {
-          border-color: #ff9900;
-          color: #fff;
-          background: linear-gradient(135deg, rgba(255, 153, 0, 0.32), rgba(255, 0, 255, 0.2), rgba(0, 255, 255, 0.14));
-          box-shadow:
-            0 0 20px rgba(255, 153, 0, 0.38),
-            inset 0 1px 0 rgba(255, 255, 255, 0.18);
-        }
-
-        .three-official-direct-grid button:hover,
-        .three-official-module-grid button:hover,
-        .three-official-orb:hover {
-          filter: brightness(1.25);
-        }
-
-        .three-official-modules {
-          display: grid;
-          gap: 8px;
-        }
-
-        .three-official-slider,
-        .three-official-readout {
-          display: grid;
-          gap: 5px;
-          padding: 7px 10px;
-          clip-path: polygon(10px 0, calc(100% - 8px) 0, 100% 9px, 100% calc(100% - 10px), calc(100% - 11px) 100%, 0 100%, 0 10px);
-        }
-
-        .three-official-slider span,
-        .three-official-readout span {
-          color: #00ffff;
-          font-size: 14px;
-        }
-
-        .three-official-slider input {
-          width: 100%;
-          accent-color: #ff00ff;
-        }
-
-        .three-official-readout {
-          grid-template-columns: auto 1fr auto 1fr auto 1fr;
-          align-items: center;
-          font-size: 12px;
-        }
-
-        .three-official-popup-ui {
-          position: fixed;
-          left: -12000px;
-          top: 360px;
-          width: 680px;
-          height: 260px;
-          overflow: hidden;
-          border: 2px solid #00ffff;
-          background:
-            linear-gradient(125deg, rgba(255, 255, 255, 0.1), transparent 22%, rgba(255, 0, 255, 0.12)),
-            linear-gradient(115deg, rgba(26, 16, 60, 0.96), rgba(7, 0, 17, 0.96) 52%, rgba(33, 16, 76, 0.96));
-          color: #e0e0e0;
-          box-shadow:
-            0 0 22px rgba(255, 0, 255, 0.42),
-            inset 0 0 28px rgba(0, 255, 255, 0.12);
-          clip-path: polygon(18px 0, calc(100% - 28px) 0, 100% 18px, 100% calc(100% - 28px), calc(100% - 18px) 100%, 12px 100%, 0 calc(100% - 16px), 0 18px);
-          padding: 24px;
-        }
-
-        .three-official-popup-title {
-          display: flex;
-          align-items: baseline;
-          justify-content: space-between;
-          gap: 18px;
-          border-bottom: 1px solid rgba(0, 255, 255, 0.34);
-          padding-bottom: 12px;
-        }
-
-        .three-official-popup-title strong {
-          color: #ff9900;
-          font: 900 30px Orbitron, system-ui, sans-serif;
-          text-shadow: 0 0 14px rgba(255, 153, 0, 0.54);
-        }
-
-        .three-official-popup-title span,
-        .three-official-popup-ui p {
-          color: #9fefff;
-          font-size: 14px;
-        }
-
-        .three-official-popup-ui p {
-          min-height: 42px;
-          margin: 18px 0;
-        }
-
-        .three-official-popup-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 12px;
-        }
-
-        .three-official-popup-grid button {
-          min-height: 50px;
-          border: 2px solid rgba(255, 0, 255, 0.68);
-          background: rgba(7, 0, 17, 0.72);
-          color: #fff;
-          cursor: pointer;
-          font: 900 16px "Share Tech Mono", monospace;
-          box-shadow: 0 0 16px rgba(255, 0, 255, 0.22);
-          clip-path: polygon(10px 0, calc(100% - 8px) 0, 100% 9px, 100% calc(100% - 10px), calc(100% - 11px) 100%, 0 100%, 0 10px);
-        }
-      `}</style>
+      <ThreeOfficialInteractiveLabStyles />
     </main>
   );
 }

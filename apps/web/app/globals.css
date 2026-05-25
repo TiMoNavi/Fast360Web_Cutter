@@ -5150,6 +5150,7 @@ input[type="file"] {
   gap: 9px;
   width: min(390px, calc(100vw - 36px));
   padding: 12px;
+  pointer-events: auto;
 }
 
 .aframe-login-hud strong,
@@ -5208,6 +5209,8 @@ input[type="file"] {
   border: 0;
   border-radius: 999px;
   font-weight: 900;
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .xr-dom-login-tabs button {
@@ -5236,6 +5239,8 @@ input[type="file"] {
   color: #1b2731;
   font-size: 15px;
   outline: none;
+  pointer-events: auto;
+  padding: 8px 12px;
 }
 
 .xr-dom-login-form input:focus {

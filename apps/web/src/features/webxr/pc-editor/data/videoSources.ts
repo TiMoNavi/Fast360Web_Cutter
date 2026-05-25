@@ -26,6 +26,35 @@ export function videoResolution(video: VideoSummary) {
   return undefined;
 }
 
+function metadataString(video: VideoSummary, key: string) {
+  const value = video.metadata?.[key];
+  return typeof value === "string" ? value.toLowerCase() : null;
+}
+
+export function isLikelyEquirectangularSource(video: VideoSummary) {
+  const projection = metadataString(video, "projection");
+  const layout = metadataString(video, "layout");
+
+  if (projection && projection !== "equirectangular") {
+    return false;
+  }
+
+  if (layout && layout !== "mono-2:1") {
+    return false;
+  }
+
+  if (projection === "equirectangular" || layout === "mono-2:1") {
+    return true;
+  }
+
+  if (video.width && video.height) {
+    const aspect = video.width / video.height;
+    return aspect > 1.92 && aspect < 2.08;
+  }
+
+  return true;
+}
+
 export function videoToSource(video: VideoSummary): AFrame360VideoSource | null {
   const sourceUrl = browserAssetUrl(video.sourceUrl);
   if (!sourceUrl) {

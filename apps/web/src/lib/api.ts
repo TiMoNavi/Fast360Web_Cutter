@@ -207,11 +207,12 @@ export async function apiGet<T>(path: string, options?: RequestOptions): Promise
   return parseJson<T>(response);
 }
 
-export async function apiPostJson<T>(path: string, payload: unknown): Promise<T> {
+export async function apiPostJson<T>(path: string, payload: unknown, options?: RequestOptions): Promise<T> {
   const response = await fetch(apiFetchUrl(path), {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...requestHeaders(options)
     },
     credentials: "include",
     body: JSON.stringify(payload)
@@ -220,11 +221,12 @@ export async function apiPostJson<T>(path: string, payload: unknown): Promise<T>
   return parseJson<T>(response);
 }
 
-export async function apiPutJson<T>(path: string, payload: unknown): Promise<T> {
+export async function apiPutJson<T>(path: string, payload: unknown, options?: RequestOptions): Promise<T> {
   const response = await fetch(apiFetchUrl(path), {
     method: "PUT",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...requestHeaders(options)
     },
     credentials: "include",
     body: JSON.stringify(payload)
@@ -395,11 +397,25 @@ export function defaultClipEditConfig(videoId: string, sessionId: string): ClipE
 
 export async function createCutSession(
   videoId: string,
-  sessionId: string
+  sessionId: string,
+  options?: RequestOptions
 ): Promise<CutSessionSummary> {
   return apiPostJson<CutSessionSummary>(
     "/api/cut-sessions",
-    defaultClipEditConfig(videoId, sessionId)
+    defaultClipEditConfig(videoId, sessionId),
+    options
+  );
+}
+
+export async function updateCutSessionVideo(
+  sessionId: string,
+  videoId: string,
+  options?: RequestOptions
+): Promise<{ sessionId: string; videoId: string }> {
+  return apiPutJson<{ sessionId: string; videoId: string }>(
+    `/api/cut-sessions/${encodeURIComponent(sessionId)}/config`,
+    defaultClipEditConfig(videoId, sessionId),
+    options
   );
 }
 
