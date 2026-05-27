@@ -4,7 +4,12 @@ import { createElement, useEffect, useRef, useState } from "react";
 import { Material, Object3D } from "three";
 import { HTMLMesh } from "three/examples/jsm/interactive/HTMLMesh.js";
 import type { PcEditorCommand } from "../commands";
-import { SPATIAL_UI_HIT_ATTRIBUTE, setSpatialUiRayActive } from "../shared/SpatialUiInteraction";
+import {
+  SPATIAL_UI_HIT_ATTRIBUTE,
+  SPATIAL_UI_RENDER_ORDER,
+  SPATIAL_UI_TEXT_RENDER_ORDER,
+  setSpatialUiRayActive
+} from "../shared/SpatialUiInteraction";
 import {
   SPATIAL_PLAYER_DESKTOP_ROOT_POSITION,
   SPATIAL_PLAYER_HIT_LAYER_Z,
@@ -170,7 +175,7 @@ function truncateText(value: string, maxChars?: number) {
 }
 
 function material(color: string, opacity = 1, glow = 0.4) {
-  return `shader: flat; color: ${color}; emissive: ${color}; emissiveIntensity: ${glow}; opacity: ${opacity}; transparent: true; side: double`;
+  return `shader: flat; color: ${color}; emissive: ${color}; emissiveIntensity: ${glow}; opacity: ${opacity}; transparent: true; side: double; depthTest: false; depthWrite: false`;
 }
 
 type TextTone = "accent" | "icon" | "mono" | "primary" | "record" | "soft";
@@ -185,7 +190,7 @@ function textProps(value: string, color = WHITE, width = 3, tone: TextTone = "pr
     color,
     ...(font ? { font } : {}),
     letterSpacing,
-    material: `shader: msdf; emissive: ${color}; emissiveIntensity: 0.52`,
+    material: `shader: msdf; emissive: ${color}; emissiveIntensity: 0.52; depthTest: false; depthWrite: false`,
     opacity: tone === "soft" ? 0.86 : 1,
     side: "double",
     value,
@@ -345,9 +350,9 @@ function elevateNativeLayer(root: AFrameEntity | null) {
     const tag = element?.tagName.toLowerCase();
 
     if (tag === "a-text" || element?.classList.contains("hybrid-native-icon")) {
-      child.renderOrder = 40;
+      child.renderOrder = SPATIAL_UI_TEXT_RENDER_ORDER;
     } else if (element?.classList.contains("clickable")) {
-      child.renderOrder = 50;
+      child.renderOrder = SPATIAL_UI_RENDER_ORDER;
     }
   });
 }
@@ -836,6 +841,7 @@ function paintHybridControlsCanvas(host: HTMLElement, progress = 0, controlState
   drawGlassPanel(context, spatialPlayerSkinRects.recordPanel, { accent: "red", solid: true });
   drawGlassPanel(context, spatialPlayerSkinRects.playbackRatePanel, { solid: true });
   drawGlassPanel(context, spatialPlayerSkinRects.recordingRatePanel, { solid: true });
+  drawGlassPanel(context, spatialPlayerSkinRects.effectSpeedPanel, { solid: true });
   drawGlassPanel(context, spatialPlayerSkinRects.playlistPanel, { solid: true });
   drawButtonGlass(context, spatialPlayerSkinRects.previousButton, "secondary");
   drawButtonGlass(context, spatialPlayerSkinRects.playButton, "play");
@@ -849,6 +855,7 @@ function paintHybridControlsCanvas(host: HTMLElement, progress = 0, controlState
   drawControlStateOverlay(context, spatialPlayerSkinRects.recordPanel, controlStates.recordToggle, { radius: 36, skew: true });
   drawControlStateOverlay(context, spatialPlayerSkinRects.playbackRatePanel, controlStates.playbackRate, { radius: 36, skew: true });
   drawControlStateOverlay(context, spatialPlayerSkinRects.recordingRatePanel, controlStates.recordingRate, { radius: 36, skew: true });
+  drawControlStateOverlay(context, spatialPlayerSkinRects.effectSpeedPanel, controlStates.effectSpeed, { radius: 36, skew: true });
   drawControlStateOverlay(context, spatialPlayerSkinRects.settingsButton, controlStates.settings, { skew: true });
   drawControlStateOverlay(context, spatialPlayerSkinRects.playlistPanel, controlStates.playlist, { radius: 36, skew: true });
   context.restore();
@@ -1261,6 +1268,7 @@ function HitPlane({
     height: String(size.height),
     material: material(CYAN, 0.001, 0),
     position: pxToWorld(resolvedSlot.x, resolvedSlot.y, SPATIAL_PLAYER_HIT_LAYER_Z),
+    renderOrder: SPATIAL_UI_RENDER_ORDER,
     ref,
     width: String(size.width)
   });
@@ -1313,6 +1321,7 @@ function RayBlockerPlane() {
     height: String(size.height),
     material: material(CYAN, 0.001, 0),
     position: pxToWorld(SPATIAL_PLAYER_SKIN_WIDTH_PX / 2, SPATIAL_PLAYER_SKIN_HEIGHT_PX / 2, SPATIAL_PLAYER_HIT_LAYER_Z - 0.004),
+    renderOrder: SPATIAL_UI_RENDER_ORDER,
     ref,
     width: String(size.width)
   });
@@ -1566,7 +1575,7 @@ export function HybridSkinPlayerBar({
     const skinMesh = new HTMLMesh(skinDom);
     skinMesh.name = "hybrid-skin-player-bar";
     skinMesh.position.set(0, 0, 0);
-    skinMesh.renderOrder = 0;
+    skinMesh.renderOrder = SPATIAL_UI_RENDER_ORDER;
     const skinMaterial = skinMesh.material as Material;
     skinMaterial.depthWrite = false;
     skinMaterial.depthTest = false;
@@ -1635,6 +1644,7 @@ export function HybridSkinPlayerBar({
     {
       "data-testid": "hybrid-skin-player-bar",
       position: rootPosition,
+      renderOrder: SPATIAL_UI_RENDER_ORDER,
       rotation: SPATIAL_PLAYER_ROOT_ROTATION,
       ref: rootRef
     },
@@ -1642,7 +1652,8 @@ export function HybridSkinPlayerBar({
       "a-entity",
       {
         "data-testid": "hybrid-native-text-layer",
-        position: SPATIAL_PLAYER_TEXT_LAYER_POSITION
+        position: SPATIAL_PLAYER_TEXT_LAYER_POSITION,
+        renderOrder: SPATIAL_UI_TEXT_RENDER_ORDER
       },
       createElement(PlayerText, {
         color: CYAN,

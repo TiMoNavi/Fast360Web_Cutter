@@ -197,14 +197,15 @@ test("Player V2 MetaVR debug entry keeps keyboard recording and writes backend p
   await clickSpatialTarget(page, "arwes-workbench-region-hit-start");
   await expect(state).toHaveAttribute("data-recording-active", "true");
 
-  const renderTestResponse = page.waitForResponse((nextResponse) =>
+  const finalizeResponse = page.waitForResponse((nextResponse) =>
     nextResponse.request().method() === "POST" &&
-    nextResponse.url().includes(`/api/cut-sessions/${encodeURIComponent(session.sessionId)}/render-test`)
+    nextResponse.url().includes(`/api/cut-sessions/${encodeURIComponent(session.sessionId)}/finalize-recording`)
   );
+  await page.waitForTimeout(1200);
   await clickSpatialTarget(page, "arwes-workbench-region-hit-start");
   await expect(state).toHaveAttribute("data-recording-active", "false");
 
-  expect((await renderTestResponse).status()).toBe(200);
+  expect((await finalizeResponse).status()).toBe(200);
 });
 
 test("Player V2 immersive effect ring writes a real backend effect event", async ({ page }) => {

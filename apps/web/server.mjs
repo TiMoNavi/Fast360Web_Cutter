@@ -26,19 +26,47 @@ const port = Number(readArgValue('--port') ?? process.env.PORT ?? 3080);
 const app = next({ dev, dir: appDir, hostname, port });
 const handle = app.getRequestHandler();
 
-// Generate self-signed certificate if it doesn't exist
+function resolveOpenSslCommand() {
+  const candidates = [
+    'openssl',
+    'C:\\Program Files\\Git\\usr\\bin\\openssl.exe',
+    'C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe',
+    'C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe'
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      execSync(`"${candidate}" version`, { stdio: 'ignore' });
+      return candidate;
+    } catch {
+      // Try the next common Windows install path.
+    }
+  }
+
+  return null;
+}
+
+// Generate self-signed certificate if it doesn't exist.
+// It includes 127.0.0.1 so local HTTPS can be opened as https://127.0.0.1:3080.
 const certDir = path.join(appDir, '.cert');
 const keyPath = path.join(certDir, 'localhost-key.pem');
 const certPath = path.join(certDir, 'localhost.pem');
+const certMarkerPath = path.join(certDir, 'localhost-san-v2.marker');
 
 if (!fs.existsSync(certDir)) {
   fs.mkdirSync(certDir, { recursive: true });
 }
 
-if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+if (!fs.existsSync(keyPath) || !fs.existsSync(certPath) || !fs.existsSync(certMarkerPath)) {
   console.log('Generating self-signed certificate...');
   try {
-    execSync(`openssl req -x509 -newkey rsa:2048 -nodes -sha256 -subj "/CN=localhost" -keyout "${keyPath}" -out "${certPath}" -days 365`, { stdio: 'inherit' });
+    const openSsl = resolveOpenSslCommand();
+    if (!openSsl) {
+      throw new Error('OpenSSL was not found.');
+    }
+
+    execSync(`"${openSsl}" req -x509 -newkey rsa:2048 -nodes -sha256 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1" -keyout "${keyPath}" -out "${certPath}" -days 365`, { stdio: 'inherit' });
+    fs.writeFileSync(certMarkerPath, 'localhost SAN certificate generated\n');
     console.log('Certificate generated successfully');
   } catch (error) {
     console.error('Failed to generate certificate. Make sure OpenSSL is installed.');

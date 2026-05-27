@@ -17,6 +17,7 @@ from .models import (
     AuthUser,
     ClipEditConfig,
     EffectEventsPatch,
+    FinalizeRecordingRequest,
     PlaybackClientState,
     RenderTestRequest,
     SessionMusicConfig,
@@ -27,13 +28,16 @@ from .models import (
 )
 from .incremental_render import (
     SEGMENT_DURATION_MS,
+    cancel_scheduled_segment_rerender,
     cancel_segment_render,
+    schedule_segment_rerender,
     trigger_segment_render,
 )
 from .rendering import run_frame_remap_equirect
 from .rendering.effects import events_for_segment
 from .rendering.path_pipeline import (
     build_enabled_render_segments,
+    clip_timeline_points,
     prepare_render_segment,
     relative_segment_points,
     render_point_from_row,
@@ -131,6 +135,8 @@ RENDER_TEST_FPS = 30
 RENDER_TEST_MAX_YAW_RATE_DEGREES_PER_SECOND = 360
 RENDER_TEST_MAX_PITCH_RATE_DEGREES_PER_SECOND = 360
 RENDER_TEST_MAX_FOV_RATE_DEGREES_PER_SECOND = 360
+RECORDING_MIN_DURATION_MS = read_int_env("RECORDING_MIN_DURATION_MS", 1000)
+RECORDING_MAX_DURATION_MS = read_int_env("RECORDING_MAX_DURATION_MS", 10 * 60_000)
 DEMO_VIDEO_DIR = SAMPLE_VIDEOS_DIR / "public-360"
 DEMO_VIDEO_CATALOG = [
     {
@@ -1284,6 +1290,8 @@ def receive_path_patch(
 ) -> dict[str, str | int]:
     if session_id != patch.session_id:
         raise HTTPException(status_code=400, detail="sessionId does not match route")
+    segment_renders_to_start: list[tuple[int, int, int, int]] = []
+    segment_rerenders_to_schedule: list[tuple[int, int, int, int, float]] = []
     with connect() as conn:
         session = conn.execute(
             "SELECT id, timeline_revision FROM cut_sessions WHERE id = ? AND user_id = ?",
@@ -1293,36 +1301,137 @@ def receive_path_patch(
             raise HTTPException(status_code=404, detail="Cut session not found")
         save_patch(conn, session_id, patch)
 
-        timeline_revision = session["timeline_revision"]
-        if patch.points:
-            max_t_ms = max(p.t_ms for p in patch.points)
-            min_t_ms = min(p.t_ms for p in patch.points)
+        timeline_revision = max(int(session["timeline_revision"] or 0), int(patch.path_revision))
+        patch_start_ms = int(patch.replace_range.start_ms)
+        patch_end_ms = int(patch.replace_range.end_ms)
+        path_bounds = conn.execute(
+            "SELECT MIN(t_ms) AS start_ms, MAX(t_ms) AS end_ms FROM view_path_points WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
 
-            completed_segment_index = max_t_ms // SEGMENT_DURATION_MS
-
-            existing_segments = conn.execute(
-                "SELECT segment_index, status FROM segment_renders WHERE session_id = ? AND status IN ('rendering', 'completed')",
-                (session_id,)
+        if not path_bounds or path_bounds["start_ms"] is None or path_bounds["end_ms"] is None:
+            now = utc_now()
+            stale_segments = conn.execute(
+                """
+                SELECT id, segment_index, status
+                FROM segment_renders
+                WHERE session_id = ? AND status IN ('rendering', 'completed', 'dirty')
+                """,
+                (session_id,),
             ).fetchall()
+            for seg in stale_segments:
+                cancel_segment_render(session_id, int(seg["segment_index"]))
+                cancel_scheduled_segment_rerender(session_id, int(seg["segment_index"]))
+                conn.execute(
+                    "UPDATE segment_renders SET status = ?, updated_at = ? WHERE id = ?",
+                    ("cancelled", now, seg["id"]),
+                )
+        else:
+            recording_start_ms = int(path_bounds["start_ms"])
+            recording_end_ms = int(path_bounds["end_ms"])
+            capped_recording_end_ms = min(recording_end_ms, recording_start_ms + RECORDING_MAX_DURATION_MS)
+            completed_segment_count = max(0, (capped_recording_end_ms - recording_start_ms) // SEGMENT_DURATION_MS)
 
-            for seg in existing_segments:
-                if seg["segment_index"] > completed_segment_index or min_t_ms < seg["segment_index"] * SEGMENT_DURATION_MS:
-                    cancel_segment_render(session_id, seg["segment_index"])
+            def segment_range(segment_index: int) -> tuple[int, int]:
+                start_ms = recording_start_ms + segment_index * SEGMENT_DURATION_MS
+                return start_ms, start_ms + SEGMENT_DURATION_MS
+
+            existing_segment_rows = conn.execute(
+                """
+                SELECT id, segment_index, start_ms, end_ms, status
+                FROM segment_renders
+                WHERE session_id = ? AND status IN ('rendering', 'completed', 'dirty')
+                ORDER BY updated_at DESC
+                """,
+                (session_id,),
+            ).fetchall()
+            latest_segments: dict[int, sqlite3.Row] = {}
+            for seg in existing_segment_rows:
+                segment_index = int(seg["segment_index"])
+                if segment_index not in latest_segments:
+                    latest_segments[segment_index] = seg
+
+            deferred_segments: set[int] = set()
+            now = utc_now()
+            for segment_index, seg in latest_segments.items():
+                if segment_index >= completed_segment_count:
+                    if seg["status"] == "rendering":
+                        cancel_segment_render(session_id, segment_index)
+                    cancel_scheduled_segment_rerender(session_id, segment_index)
                     conn.execute(
-                        "UPDATE segment_renders SET status = 'cancelled', updated_at = ? WHERE session_id = ? AND segment_index = ?",
-                        (utc_now(), session_id, seg["segment_index"])
+                        "UPDATE segment_renders SET status = ?, updated_at = ? WHERE id = ?",
+                        ("cancelled", now, seg["id"]),
                     )
+                    continue
 
-            for seg_idx in range(completed_segment_index):
+                segment_overlaps_patch = int(seg["start_ms"]) < patch_end_ms and int(seg["end_ms"]) > patch_start_ms
+                if not segment_overlaps_patch:
+                    continue
+
+                start_ms, end_ms = segment_range(segment_index)
+                status = str(seg["status"])
+                if status == "rendering":
+                    cancel_segment_render(session_id, segment_index)
+                    conn.execute(
+                        "UPDATE segment_renders SET status = ?, updated_at = ? WHERE id = ?",
+                        ("cancelled", now, seg["id"]),
+                    )
+                    segment_rerenders_to_schedule.append((
+                        segment_index,
+                        start_ms,
+                        end_ms,
+                        timeline_revision,
+                        1,
+                    ))
+                    deferred_segments.add(segment_index)
+                elif status in ("completed", "dirty"):
+                    conn.execute(
+                        """
+                        UPDATE segment_renders
+                        SET status = ?, error_message = NULL, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        ("dirty", now, seg["id"]),
+                    )
+                    segment_rerenders_to_schedule.append((
+                        segment_index,
+                        start_ms,
+                        end_ms,
+                        timeline_revision,
+                        30,
+                    ))
+                    deferred_segments.add(segment_index)
+
+            for seg_idx in range(completed_segment_count):
+                if seg_idx in deferred_segments:
+                    continue
                 existing = conn.execute(
-                    "SELECT id, status FROM segment_renders WHERE session_id = ? AND segment_index = ?",
-                    (session_id, seg_idx)
+                    """
+                    SELECT id, status
+                    FROM segment_renders
+                    WHERE session_id = ? AND segment_index = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id, seg_idx),
                 ).fetchone()
 
                 if existing is None or existing["status"] in ("cancelled", "failed"):
-                    start_ms = seg_idx * SEGMENT_DURATION_MS
-                    end_ms = (seg_idx + 1) * SEGMENT_DURATION_MS
-                    trigger_segment_render(session_id, seg_idx, start_ms, end_ms, timeline_revision)
+                    start_ms, end_ms = segment_range(seg_idx)
+                    segment_renders_to_start.append((seg_idx, start_ms, end_ms, timeline_revision))
+
+    for segment_index, start_ms, end_ms, timeline_revision, delay_seconds in segment_rerenders_to_schedule:
+        schedule_segment_rerender(
+            session_id,
+            segment_index,
+            start_ms,
+            end_ms,
+            timeline_revision,
+            delay_seconds=delay_seconds,
+        )
+
+    for segment_index, start_ms, end_ms, timeline_revision in segment_renders_to_start:
+        trigger_segment_render(session_id, segment_index, start_ms, end_ms, timeline_revision)
 
     return {
         "sessionId": session_id,
@@ -1465,15 +1574,21 @@ def get_segment_renders(session_id: str, user: dict[str, str] = Depends(require_
         if session is None:
             raise HTTPException(status_code=404, detail="Cut session not found")
 
-        segments = conn.execute(
+        segment_rows = conn.execute(
             """
             SELECT segment_index, start_ms, end_ms, status, file_path, error_message, updated_at
             FROM segment_renders
             WHERE session_id = ?
-            ORDER BY segment_index
+            ORDER BY segment_index, updated_at DESC
             """,
             (session_id,)
         ).fetchall()
+        latest_segments: dict[int, sqlite3.Row] = {}
+        for segment in segment_rows:
+            segment_index = int(segment["segment_index"])
+            if segment_index not in latest_segments:
+                latest_segments[segment_index] = segment
+        segments = [latest_segments[index] for index in sorted(latest_segments)]
 
     return {
         "segments": [
@@ -1488,6 +1603,277 @@ def get_segment_renders(session_id: str, user: dict[str, str] = Depends(require_
             }
             for s in segments
         ]
+    }
+
+
+def latest_completed_segment_path(
+    session_id: str,
+    segment_index: int,
+    start_ms: int,
+    end_ms: int,
+    timeline_revision: int,
+) -> Path | None:
+    with connect() as conn:
+        segment = conn.execute(
+            """
+            SELECT status, file_path, timeline_revision
+            FROM segment_renders
+            WHERE session_id = ?
+                AND segment_index = ?
+                AND start_ms = ?
+                AND end_ms = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (session_id, segment_index, start_ms, end_ms),
+        ).fetchone()
+    if segment is None or segment["status"] != "completed":
+        return None
+    if int(segment["timeline_revision"] or 0) < timeline_revision:
+        return None
+    if not segment["file_path"]:
+        return None
+
+    path = Path(str(segment["file_path"]))
+    return path if path.is_file() else None
+
+
+@app.post("/api/cut-sessions/{session_id}/finalize-recording")
+def finalize_recording(
+    session_id: str,
+    payload: FinalizeRecordingRequest | None = None,
+    user: dict[str, str] = Depends(require_user),
+) -> dict[str, str | bool | int | None]:
+    export_id = new_id("export")
+    now = utc_now()
+    with connect() as conn:
+        session = conn.execute(
+            """
+            SELECT cut_sessions.*, videos.stored_filename, videos.duration_ms
+            FROM cut_sessions
+            JOIN videos ON videos.id = cut_sessions.video_id
+            WHERE cut_sessions.id = ? AND cut_sessions.user_id = ?
+            """,
+            (session_id, user["id"]),
+        ).fetchone()
+        if session is None:
+            raise HTTPException(status_code=404, detail="Cut session not found")
+        rows = conn.execute(
+            """
+            SELECT t_ms, yaw, pitch, fov_h, fov_v, enabled, cut,
+                interpolation, transition_ms
+            FROM view_path_points
+            WHERE session_id = ?
+            ORDER BY t_ms
+            """,
+            (session_id,),
+        ).fetchall()
+        if len(rows) < 2:
+            raise HTTPException(status_code=400, detail="Need at least two path points before finalizing")
+
+        first_point_ms = int(rows[0]["t_ms"])
+        last_point_ms = int(rows[-1]["t_ms"])
+        requested_start_ms = payload.start_ms if payload and payload.start_ms is not None else first_point_ms
+        requested_end_ms = payload.end_ms if payload and payload.end_ms is not None else last_point_ms
+        raw_start_ms = max(first_point_ms, int(requested_start_ms))
+        raw_end_ms = min(last_point_ms, int(requested_end_ms))
+        video_duration_ms = int(session["duration_ms"] or 0)
+        validated_end_ms = min(raw_end_ms, video_duration_ms) if video_duration_ms > 0 else raw_end_ms
+        validated_end_ms = min(validated_end_ms, raw_start_ms + RECORDING_MAX_DURATION_MS)
+        if validated_end_ms - raw_start_ms < RECORDING_MIN_DURATION_MS:
+            raise HTTPException(status_code=400, detail="Recording duration is too short")
+
+        effects = list_effect_events(conn, session_id, raw_start_ms, validated_end_ms)
+        music_config = get_session_music(conn, session_id)
+        conn.execute(
+            """
+            INSERT INTO exports (id, session_id, user_id, status, file_path, error_message, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (export_id, session_id, user["id"], "rendering", None, None, now, now),
+        )
+        conn.execute(
+            "UPDATE cut_sessions SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            ("rendering", now, session_id, user["id"]),
+        )
+
+    all_points = [render_point_from_row(point) for point in rows]
+    first_point_ms = int(float(all_points[0]["t_ms"]))
+    last_point_ms = int(float(all_points[-1]["t_ms"]))
+    requested_start_ms = payload.start_ms if payload and payload.start_ms is not None else first_point_ms
+    requested_end_ms = payload.end_ms if payload and payload.end_ms is not None else last_point_ms
+    record_start_ms = max(first_point_ms, int(requested_start_ms))
+    recorded_end_ms = min(last_point_ms, int(requested_end_ms))
+    video_duration_ms = int(session["duration_ms"] or 0)
+    capped = False
+    record_end_ms = recorded_end_ms
+    if video_duration_ms > 0:
+        record_end_ms = min(record_end_ms, video_duration_ms)
+    if record_end_ms - record_start_ms > RECORDING_MAX_DURATION_MS:
+        record_end_ms = record_start_ms + RECORDING_MAX_DURATION_MS
+        capped = True
+
+    recording_duration_ms = record_end_ms - record_start_ms
+    if recording_duration_ms < RECORDING_MIN_DURATION_MS:
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE exports
+                SET status = ?, error_message = ?, updated_at = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                ("failed", "Recording duration is too short.", now, export_id, user["id"]),
+            )
+            conn.execute(
+                "UPDATE cut_sessions SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                ("collecting", now, session_id, user["id"]),
+            )
+        raise HTTPException(status_code=400, detail="Recording duration is too short")
+
+    source_path = VIDEOS_DIR / session["stored_filename"]
+    output_path = EXPORTS_DIR / f"{export_id}.mp4"
+    work_dir = TMP_DIR / export_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    segment_paths: list[Path] = []
+    rendered_duration_ms = 0
+    loop_source = bool(payload.loop_source) if payload is not None else False
+    timeline_revision = int(session["timeline_revision"] or 0)
+    timeline_base_start_ms = first_point_ms
+
+    try:
+        chunk_start_ms = record_start_ms
+        while chunk_start_ms < record_end_ms:
+            chunk_end_ms = min(record_end_ms, chunk_start_ms + SEGMENT_DURATION_MS)
+            cached_segment_path: Path | None = None
+            chunk_duration_ms = chunk_end_ms - chunk_start_ms
+            segment_offset_ms = chunk_start_ms - timeline_base_start_ms
+            if (
+                not loop_source
+                and chunk_duration_ms == SEGMENT_DURATION_MS
+                and segment_offset_ms >= 0
+                and segment_offset_ms % SEGMENT_DURATION_MS == 0
+            ):
+                cached_segment_path = latest_completed_segment_path(
+                    session_id,
+                    segment_offset_ms // SEGMENT_DURATION_MS,
+                    chunk_start_ms,
+                    chunk_end_ms,
+                    timeline_revision,
+                )
+
+            if cached_segment_path is not None:
+                segment_paths.append(cached_segment_path)
+                metadata = probe_video_metadata(cached_segment_path)
+                cached_duration_ms = int(metadata.get("durationMs") or 0)
+                rendered_duration_ms += cached_duration_ms if cached_duration_ms > 0 else chunk_duration_ms
+                chunk_start_ms = chunk_end_ms
+                continue
+
+            chunk_points = clip_timeline_points(all_points, chunk_start_ms, chunk_end_ms)
+            render_segments = build_enabled_render_segments(chunk_points)
+
+            for render_segment in render_segments:
+                segment_start_ms = int(float(render_segment[0]["t_ms"]))
+                segment_end_ms = int(float(render_segment[-1]["t_ms"]))
+                duration_ms = segment_end_ms - segment_start_ms
+                if duration_ms <= 0:
+                    continue
+
+                prepared_segment = prepare_render_segment(
+                    render_segment,
+                    fps=RENDER_TEST_FPS,
+                    max_yaw_rate=RENDER_TEST_MAX_YAW_RATE_DEGREES_PER_SECOND,
+                    max_pitch_rate=RENDER_TEST_MAX_PITCH_RATE_DEGREES_PER_SECOND,
+                    max_fov_rate=RENDER_TEST_MAX_FOV_RATE_DEGREES_PER_SECOND,
+                )
+                segment_path = work_dir / f"segment-{len(segment_paths):03d}.mp4"
+                run_frame_remap_equirect(
+                    source_path,
+                    segment_path,
+                    work_dir / f"segment-{len(segment_paths):03d}",
+                    relative_segment_points(prepared_segment),
+                    duration_ms,
+                    source_start_ms=segment_start_ms % video_duration_ms if loop_source and video_duration_ms > 0 else segment_start_ms,
+                    fps=RENDER_TEST_FPS,
+                    effect_events=events_for_segment(effects, segment_start_ms, segment_end_ms),
+                    loop_source=loop_source and video_duration_ms > 0,
+                )
+                segment_paths.append(segment_path)
+                rendered_duration_ms += duration_ms
+
+            chunk_start_ms = chunk_end_ms
+
+        if not segment_paths:
+            raise RuntimeError("No valid recording segments to export")
+        if len(segment_paths) == 1:
+            shutil.copy(segment_paths[0], output_path)
+        else:
+            concat_segments_reencode(segment_paths, work_dir / "segments.txt", output_path, fps=RENDER_TEST_FPS)
+
+        if (
+            music_config is not None
+            and bool(music_config["enabled"])
+            and music_config["stored_filename"]
+            and rendered_duration_ms > 0
+        ):
+            music_path = MUSIC_DIR / music_config["stored_filename"]
+            if music_path.is_file():
+                silent_video_path = work_dir / "video-without-music.mp4"
+                shutil.move(output_path, silent_video_path)
+                mux_music_to_video(
+                    silent_video_path,
+                    music_path,
+                    output_path,
+                    rendered_duration_ms,
+                    gain_db=float(music_config["gain_db"]),
+                )
+
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE exports
+                SET status = ?, file_path = ?, error_message = NULL, updated_at = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                ("ready", str(output_path), now, export_id, user["id"]),
+            )
+            conn.execute(
+                "UPDATE cut_sessions SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                ("export_ready", now, session_id, user["id"]),
+            )
+            mark_minutes(conn, session_id, record_start_ms, record_end_ms, "done", now)
+    except Exception as exc:
+        error_message = str(exc)
+        now = utc_now()
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE exports
+                SET status = ?, error_message = ?, updated_at = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                ("failed", error_message[:1000], now, export_id, user["id"]),
+            )
+            conn.execute(
+                "UPDATE cut_sessions SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                ("failed", now, session_id, user["id"]),
+            )
+            mark_minutes(conn, session_id, record_start_ms, max(record_end_ms, record_start_ms + 1000), "failed", now)
+        raise HTTPException(status_code=500, detail=f"Recording finalize failed: {error_message}") from exc
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    return {
+        "capped": capped,
+        "downloadReady": True,
+        "durationMs": rendered_duration_ms,
+        "exportId": export_id,
+        "loopSource": loop_source,
+        "maxDurationMs": RECORDING_MAX_DURATION_MS,
+        "sessionId": session_id,
+        "status": "ready",
     }
 
 

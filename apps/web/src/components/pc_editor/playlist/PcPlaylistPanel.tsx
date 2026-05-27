@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { usePcEditorBindingEmitter } from "../bindings";
 import type { AFrame360VideoSource } from "../controls/types";
 import styles from "./PcPlaylistPanel.module.css";
@@ -34,13 +34,26 @@ export function PcPlaylistPanel({
   status
 }: PcPlaylistPanelProps) {
   const emitBound = usePcEditorBindingEmitter("pc-playlist-panel", { legacyCommandFallback: false });
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (open || !panelRef.current) {
+      return;
+    }
+
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && panelRef.current.contains(activeElement)) {
+      activeElement.blur();
+    }
+  }, [open]);
 
   return (
     <aside
-      aria-hidden={!open}
       aria-label="Video playlist"
       className={open ? `${styles.panel} ${styles.panelOpen}` : styles.panel}
       data-testid="xr-session-player-playlist"
+      inert={open ? undefined : true}
+      ref={panelRef}
     >
       <div className={styles.shine} aria-hidden="true" />
       <header className={styles.header}>

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 DEFAULT_MAX_YAW_RATE_DEGREES_PER_SECOND = 8
 DEFAULT_MAX_PITCH_RATE_DEGREES_PER_SECOND = 5
 DEFAULT_MAX_FOV_RATE_DEGREES_PER_SECOND = 12
@@ -69,6 +71,84 @@ def build_enabled_render_segments(points: list[dict[str, float | bool | str]]) -
 def relative_segment_points(segment: list[dict[str, float | str]]) -> list[dict[str, float | str]]:
     start_ms = float(segment[0]["t_ms"])
     return [{**point, "t_ms": float(point["t_ms"]) - start_ms} for point in segment]
+
+
+def interpolate_timeline_value(points: list[dict[str, Any]], t_ms: float, key: str) -> float:
+    if t_ms <= float(points[0]["t_ms"]):
+        return float(points[0][key])
+    if t_ms >= float(points[-1]["t_ms"]):
+        return float(points[-1][key])
+
+    for index in range(len(points) - 1):
+        left = points[index]
+        right = points[index + 1]
+        left_t = float(left["t_ms"])
+        right_t = float(right["t_ms"])
+        if left_t <= t_ms <= right_t:
+            span = max(right_t - left_t, 1)
+            alpha = (t_ms - left_t) / span
+            return float(left[key]) + (float(right[key]) - float(left[key])) * alpha
+
+    return float(points[-1][key])
+
+
+def timeline_flags_at(points: list[dict[str, Any]], t_ms: float) -> dict[str, bool | str | float]:
+    if t_ms <= float(points[0]["t_ms"]):
+        source = points[0]
+    elif t_ms >= float(points[-1]["t_ms"]):
+        source = points[-1]
+    else:
+        source = points[0]
+        for index in range(len(points) - 1):
+            left = points[index]
+            right = points[index + 1]
+            if float(left["t_ms"]) <= t_ms <= float(right["t_ms"]):
+                source = left
+                break
+
+    return {
+        "cut": False,
+        "enabled": bool(source["enabled"]),
+        "interpolation": str(source.get("interpolation") or "linear"),
+        "transition_ms": float(source.get("transition_ms") or 0),
+    }
+
+
+def timeline_point_at(points: list[dict[str, Any]], t_ms: float) -> dict[str, Any]:
+    return {
+        **timeline_flags_at(points, t_ms),
+        "fov_h": interpolate_timeline_value(points, t_ms, "fov_h"),
+        "fov_v": interpolate_timeline_value(points, t_ms, "fov_v"),
+        "pitch": interpolate_timeline_value(points, t_ms, "pitch"),
+        "t_ms": float(t_ms),
+        "yaw": interpolate_timeline_value(points, t_ms, "yaw"),
+    }
+
+
+def clip_timeline_points(
+    points: list[dict[str, Any]],
+    start_ms: float,
+    end_ms: float,
+) -> list[dict[str, Any]]:
+    clipped = [timeline_point_at(points, start_ms)]
+    clipped.extend(
+        {**point}
+        for point in points
+        if start_ms < float(point["t_ms"]) < end_ms
+    )
+    clipped.append(timeline_point_at(points, end_ms))
+
+    deduped: list[dict[str, Any]] = []
+    seen_times: set[int] = set()
+    for point in sorted(clipped, key=lambda item: float(item["t_ms"])):
+        time_key = int(round(float(point["t_ms"])))
+        normalized = {**point, "t_ms": float(time_key)}
+        if time_key in seen_times:
+            deduped[-1] = normalized
+            continue
+        seen_times.add(time_key)
+        deduped.append(normalized)
+    return deduped
 
 
 def prepare_render_segment(

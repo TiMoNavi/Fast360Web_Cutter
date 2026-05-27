@@ -3,6 +3,7 @@
 import { createElement, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   SPATIAL_UI_HIT_ATTRIBUTE,
+  SPATIAL_UI_TEXT_RENDER_ORDER,
   flatEmissiveMaterial,
   transparentHitMaterial,
   useSpatialButtonEvents,
@@ -241,7 +242,7 @@ function useBillboard(rootRef: RefObject<AFrameEntityElement | null>, enabled: b
       camera?.object3D?.getWorldPosition?.(cameraPosition);
       root?.object3D?.lookAt?.(cameraPosition);
       root?.object3D?.traverse?.((child) => {
-        child.renderOrder = 90;
+        child.renderOrder = SPATIAL_UI_TEXT_RENDER_ORDER;
       });
       frameId = window.requestAnimationFrame(tick);
     };

@@ -54,7 +54,7 @@ Current WebXR PC editor product entry. It restores the backend active player ses
 ## Environment
 
 ```text
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_API_BASE_URL=
 ```
 
 ## Docs

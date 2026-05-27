@@ -8,6 +8,7 @@ WG_PORT="${WG_PORT:-51820}"
 WG_SERVER_IP="${WG_SERVER_IP:-10.77.0.1}"
 WG_CLIENT_IP="${WG_CLIENT_IP:-10.77.0.2}"
 PUBLIC_WEB_GATEWAY_PORT="${PUBLIC_WEB_GATEWAY_PORT:-39080}"
+UPSTREAM_SCHEME="${UPSTREAM_SCHEME:-https}"
 EXPOSE_TCP="${EXPOSE_TCP:-}"
 SSL_CERT="${SSL_CERT:-/root/pivot_domain_tls/pivotcompute.store.crt}"
 SSL_KEY="${SSL_KEY:-/root/pivot_domain_tls/pivotcompute.store.key}"
@@ -142,7 +143,9 @@ server {
     client_max_body_size 2g;
 
     location / {
-        proxy_pass http://${WG_CLIENT_IP}:${PUBLIC_WEB_GATEWAY_PORT};
+        proxy_pass ${UPSTREAM_SCHEME}://${WG_CLIENT_IP}:${PUBLIC_WEB_GATEWAY_PORT};
+        proxy_ssl_server_name off;
+        proxy_ssl_verify off;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;

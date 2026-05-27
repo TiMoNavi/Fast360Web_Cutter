@@ -4,6 +4,7 @@ import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import type { PcEditorCommand } from "../commands";
 import {
   SPATIAL_UI_HIT_ATTRIBUTE,
+  SPATIAL_UI_RENDER_ORDER,
   transparentHitMaterial,
   useSpatialButtonEvents,
   useSpatialRayBlockerEvents,
@@ -79,13 +80,12 @@ const WORKBENCH_REGION_COMMANDS: Partial<Record<string, WorkbenchRegionCommandFa
   CRYSTAL: () => ({ type: "effects.select", categoryId: "frame", effectId: "crystal-ball", label: "Crystal ball" }),
   DOLLY: () => ({ type: "effects.select", categoryId: "frame", effectId: "dolly-zoom", label: "Dolly zoom" }),
   EFFECT: () => ({ type: "effects.select", categoryId: "frame", effectId: "little-planet", label: "Little planet" }),
+  END: () => ({ type: "crop.end" }),
   LOCK: ({ maskLocked }) => ({ type: "mask.lock.set", locked: !(maskLocked ?? true) }),
   LOOK: () => ({ type: "effects.select", categoryId: "frame", effectId: "look-around", label: "Look around" }),
   PITCH_DOWN: () => ({ type: "mask.pitch.step", delta: -5 }),
   PITCH_UP: () => ({ type: "mask.pitch.step", delta: 5 }),
   PLAY: () => ({ type: "player.playPause.toggle" }),
-  RENDER: () => ({ type: "crop.render" }),
-  SAMPLE: ({ autoRenderEnabled }) => ({ type: "crop.autoRender.set", enabled: !(autoRenderEnabled ?? false) }),
   START: ({ recordingActive }) => ({ type: recordingActive ? "crop.end" : "crop.start" }),
   YAW_LEFT: () => ({ type: "mask.yaw.step", delta: -5 }),
   YAW_RIGHT: () => ({ type: "mask.yaw.step", delta: 5 })
@@ -127,7 +127,7 @@ function flatTextureMaterial(id: string) {
 
 function elevateTableLayer(root: AFrameEntityElement | null) {
   root?.object3D?.traverse?.((child) => {
-    child.renderOrder = 30;
+    child.renderOrder = SPATIAL_UI_RENDER_ORDER;
   });
 }
 

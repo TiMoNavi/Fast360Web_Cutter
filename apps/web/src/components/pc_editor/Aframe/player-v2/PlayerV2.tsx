@@ -69,6 +69,7 @@ export type PlayerV2Props = {
 };
 
 const VIDEO_SPHERE_RADIUS = 60;
+const PLAYER_V2_RECORDING_WATCHDOG_MS = 10 * 60_000;
 
 function readNumberPayload(payload: unknown, key: string) {
   if (!payload || typeof payload !== "object") {
@@ -205,6 +206,30 @@ function PlayerV2Content({ model }: PlayerV2Props) {
       recordingActive: view.recordingActive
     });
   }, [view.autoRenderEnabled, view.playlistOpen, view.recordingActive]);
+
+  useEffect(() => {
+    if (!view.recordingActive) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      emitEvent({
+        type: "editor.crop.end",
+        payload: {
+          maxDurationMs: PLAYER_V2_RECORDING_WATCHDOG_MS,
+          reason: "recording-timeout",
+          renderAfterEnd: true
+        },
+        source: {
+          kind: "system",
+          id: "player-v2-recording-watchdog",
+          device: "pc"
+        }
+      });
+    }, PLAYER_V2_RECORDING_WATCHDOG_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [emitEvent, view.recordingActive]);
 
   useEffect(() => {
     setPcEditorRenderState({
@@ -592,7 +617,7 @@ function PlayerV2Content({ model }: PlayerV2Props) {
           playlistOpen={view.playlistOpen}
           recordingActive={view.recordingActive}
           status={view.sourceStatus === "switching" ? "switching" : view.isPlaying ? "playing" : "paused"}
-          subtitle={`${view.sourceLabel} / mask FOV ${Math.round(view.fov)} / roll ${Math.round(view.maskRoll)} deg / sphere FOV ${Math.round(sphereFov)} / mask ${Math.round(view.maskOpacity * 100)}% / auto ${view.autoRenderEnabled ? "on" : "off"} / render ${view.renderLabel}${view.renderExportId ? ` ${view.renderExportId}` : ""}`}
+          subtitle={`${view.sourceLabel} / mask FOV ${Math.round(view.fov)} / roll ${Math.round(view.maskRoll)} deg / sphere FOV ${Math.round(sphereFov)} / mask ${Math.round(view.maskOpacity * 100)}% / export ${view.renderLabel}${view.renderExportId ? ` ${view.renderExportId}` : ""}`}
           title={view.activeSource.title ?? "Session source"}
         />
 

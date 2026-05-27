@@ -1,7 +1,7 @@
 import type { ExportStatus, WebXrPlayerSession } from "@/lib/api";
 import {
+  finalizePcEditorRecordingTransport,
   getPcEditorExportStatusTransport,
-  requestPcEditorRenderTestTransport,
   switchPcEditorPlayerSessionTransport
 } from "../transport";
 
@@ -22,15 +22,19 @@ export async function switchPcEditorSourceSession(sourceId: string): Promise<PcE
 }
 
 export async function requestPcEditorRender({
-  sessionId
+  endMs,
+  sessionId,
+  startMs
 }: {
+  endMs?: number;
   sessionId: string;
+  startMs?: number;
 }): Promise<PcEditorRenderRequestResult> {
   if (!sessionId) {
     throw new Error("No timeline session id is available.");
   }
 
-  const result = await requestPcEditorRenderTestTransport(sessionId);
+  const result = await finalizePcEditorRecordingTransport(sessionId, { endMs, startMs });
   const exportId = typeof result.exportId === "string" ? result.exportId : null;
 
   if (!exportId) {

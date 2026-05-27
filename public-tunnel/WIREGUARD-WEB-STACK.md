@@ -8,9 +8,9 @@
 https://pivotcompute.store
   -> TenCent Nginx :443
   -> WireGuard wgpc 10.77.0.1
-  -> Windows WireGuard 10.77.0.2
+  -> Windows WireGuard 10.77.0.2 over HTTPS
   -> portproxy 10.77.0.2:39080
-  -> 当前本机前端端口
+  -> 当前本机 HTTPS 前端端口
   -> Next rewrites /api, /media, /thumbnails 到本机 FastAPI
 ```
 
@@ -75,8 +75,11 @@ LOCAL_API_PORT_CANDIDATES=8000,8010,5000,5001
 
 ```text
 API_BASE_URL=http://127.0.0.1:<BackendPort>
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:<BackendPort>
+NEXT_PUBLIC_API_BASE_URL=
 ```
+
+`API_BASE_URL` 只给 Next 服务端 rewrite 使用；浏览器端保持同源 `/api`，
+避免公网页面把请求发到访问者自己的 `127.0.0.1`。
 
 如果只想接入已经运行的服务，不自动启动：
 
@@ -110,13 +113,21 @@ client: 10.77.0.2/32
 udp: 51820
 ```
 
-Nginx 已备份原配置，并把 `pivotcompute.store` 反代到：
+Nginx 已备份原配置，并把 `pivotcompute.store` 反代到本机 HTTPS upstream：
 
 ```text
-http://10.77.0.2:39080
+https://10.77.0.2:39080
 ```
 
 本机通过 portproxy 把它接到当前前端端口。
+
+当前本机固定要求：
+
+```text
+https://127.0.0.1:3080/xr/player-v2
+```
+
+本机证书是本地自签证书，SAN 包含 `localhost`、`127.0.0.1`、`::1`。公网证书仍然只在服务器 Nginx 上使用。
 
 ## 为什么不用全端口 DNAT
 
@@ -129,4 +140,3 @@ http://10.77.0.2:39080
 - 后端由前端 Next rewrites 走本机 `API_BASE_URL`
 
 如果以后确实要把某些额外公网端口也转进本机，优先加白名单端口，而不是开启 `EXPOSE_TCP=all`。
-

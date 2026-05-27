@@ -283,7 +283,7 @@ export function paintArwesWorkbenchText(canvas: HTMLCanvasElement, paintState: A
   const exportLabel = paintState.renderExportId ? `EXPORT ${paintState.renderExportId.slice(0, 8)}` : "EXPORT WAIT";
   const discardLabel = paintState.discardActive ? "DISCARD ACTIVE" : "SAMPLER IDLE";
 
-  drawLabel(context, renderStatus === "DONE" ? "RENDER READY" : `RENDER ${renderStatus}`, 1164, 372, renderStatus === "ERROR" ? DANGER : MUTED, 18);
+  drawLabel(context, renderStatus === "DONE" ? "EXPORT READY" : `EXPORT ${renderStatus}`, 1164, 372, renderStatus === "ERROR" ? DANGER : MUTED, 18);
   drawLabel(context, discardLabel, 1320, 372, paintState.discardActive ? DANGER : ORANGE, 18);
   drawLabel(context, exportLabel, 1510, 372, renderStatus === "DONE" ? CYAN : MUTED, 18, "right");
 }

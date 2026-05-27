@@ -13,8 +13,42 @@ function normalizeApiPath(path: string) {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
+function isLoopbackHost(hostname: string) {
+  const normalizedHost = hostname.toLowerCase();
+  return (
+    normalizedHost === "localhost" ||
+    normalizedHost === "0.0.0.0" ||
+    normalizedHost === "::1" ||
+    normalizedHost === "[::1]" ||
+    normalizedHost === "127.0.0.1" ||
+    normalizedHost.startsWith("127.")
+  );
+}
+
+function getUrlHostname(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+}
+
 function browserApiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+  const configuredBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ?? "";
+  if (!configuredBaseUrl) {
+    return "";
+  }
+
+  const configuredHost = getUrlHostname(configuredBaseUrl);
+  if (!configuredHost || !isLoopbackHost(configuredHost)) {
+    return configuredBaseUrl;
+  }
+
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return isLoopbackHost(window.location.hostname) ? configuredBaseUrl : "";
 }
 
 export function apiUrl(path: string) {
@@ -479,6 +513,16 @@ export async function renderTest(sessionId: string): Promise<Record<string, unkn
   return apiPostJson<Record<string, unknown>>(
     `/api/cut-sessions/${encodeURIComponent(sessionId)}/render-test`,
     {}
+  );
+}
+
+export async function finalizeRecording(
+  sessionId: string,
+  payload: { endMs?: number; startMs?: number } = {}
+): Promise<Record<string, unknown>> {
+  return apiPostJson<Record<string, unknown>>(
+    `/api/cut-sessions/${encodeURIComponent(sessionId)}/finalize-recording`,
+    payload
   );
 }
 

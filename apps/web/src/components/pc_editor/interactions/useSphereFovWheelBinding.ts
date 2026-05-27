@@ -35,7 +35,6 @@ export function useSphereFovWheelBinding({
       null;
 
     if (wheelTarget) {
-      event.preventDefault();
       const runtime = getPcEditorRuntimeState();
 
       if (wheelTarget === "mask-opacity") {
@@ -92,7 +91,6 @@ export function useSphereFovWheelBinding({
       return;
     }
 
-    event.preventDefault();
     const wheelUnits = Math.min(8, Math.max(0.5, Math.abs(event.deltaY) / 120));
     const delta = (event.deltaY < 0 ? -1 : 1) * 6 * wheelUnits;
 

@@ -662,6 +662,14 @@ def save_patch(conn: sqlite3.Connection, session_id: str, patch: ViewPathPatch) 
         """,
         [point_params(session_id, patch, point, now) for point in patch.points],
     )
+    conn.execute(
+        """
+        UPDATE cut_sessions
+        SET timeline_revision = MAX(timeline_revision, ?), updated_at = ?
+        WHERE id = ?
+        """,
+        (patch.path_revision, now, session_id),
+    )
     mark_minutes(conn, session_id, patch.replace_range.start_ms, patch.replace_range.end_ms, "dirty", now)
 
 

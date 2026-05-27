@@ -99,10 +99,12 @@ Create it from the example if you need to override the default:
 Copy-Item apps\web\.env.local.example apps\web\.env.local
 ```
 
-Default value:
+For local development you usually do not need a browser-visible API base URL.
+Next rewrites same-origin `/api`, `/media`, and `/thumbnails` requests to the
+local API server.
 
 ```text
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_API_BASE_URL=
 ```
 
 ## Sample 360 Media

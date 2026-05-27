@@ -35,6 +35,7 @@ playwright-report/
 apps/web/test-results/
 
 # Local HTTPS certificates and private keys
+apps/web/.cert/
 apps/web/certificates/
 public-tunnel/tunnel.env
 public-tunnel/generated/

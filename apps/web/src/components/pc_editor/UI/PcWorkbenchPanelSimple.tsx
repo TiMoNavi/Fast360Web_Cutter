@@ -28,7 +28,6 @@ export type PcWorkbenchPanelState = {
 };
 
 export function PcWorkbenchPanel({
-  autoRenderEnabled,
   discardActive = false,
   discardLastRange = null,
   discardMessage = "Idle. No discard range is active.",
@@ -46,7 +45,6 @@ export function PcWorkbenchPanel({
   const viewTarget = usePcEditorViewTarget();
   const [collapsed, setCollapsed] = useState(false);
   const [maskOpacity, setMaskOpacity] = useState(0.74);
-  const [autoRender, setAutoRender] = useState(false);
   const [locked, setLocked] = useState(true);
   const discardPointerActiveRef = useRef(false);
 
@@ -65,12 +63,6 @@ export function PcWorkbenchPanel({
       setMaskOpacity(viewTarget.maskOpacity);
     }
   }, [controlledMaskOpacity, viewTarget?.maskOpacity]);
-
-  useEffect(() => {
-    if (typeof autoRenderEnabled === "boolean") {
-      setAutoRender(autoRenderEnabled);
-    }
-  }, [autoRenderEnabled]);
 
   useEffect(() => {
     if (typeof maskLocked === "boolean") {
@@ -367,36 +359,6 @@ export function PcWorkbenchPanel({
             >
               <span className="xr-button-label">End crop</span>
               <span className="xr-button-key">seal</span>
-            </button>
-            <label className="xr-auto-render-toggle">
-              <input
-                checked={autoRender}
-                onChange={(event) => {
-                  const enabled = event.target.checked;
-                  setAutoRender(enabled);
-                  emitBound({
-                    trigger: { kind: "ui", target: "render-auto-toggle", action: "change" },
-                    payload: { enabled },
-                    fallbackCommand: { enabled, type: "crop.autoRender.set" }
-                  });
-                }}
-                type="checkbox"
-              />
-              <span>Auto-render</span>
-            </label>
-            <button
-              className="xr-pc-render-button"
-              data-testid="xr-pc-render-crop"
-              onClick={() =>
-                emitBound({
-                  trigger: { kind: "ui", target: "render-request", action: "click" },
-                  fallbackCommand: { type: "crop.render" }
-                })
-              }
-              type="button"
-            >
-              <span className="xr-button-label">Render</span>
-              <span className="xr-button-key">export</span>
             </button>
           </div>
           <p className="xr-pc-crop-status">{renderMessage ?? "Ready to record a crop path."}</p>

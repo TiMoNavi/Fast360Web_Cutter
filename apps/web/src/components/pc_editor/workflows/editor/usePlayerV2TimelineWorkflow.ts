@@ -110,6 +110,7 @@ export function usePlayerV2TimelineWorkflow({
   const emit = usePcEditorEventEmitter();
   const discardHoldRef = useRef<DiscardHoldState | null>(null);
   const onDiscardStateChangeRef = useRef(onDiscardStateChange);
+  const recordingStartMsRef = useRef<number | null>(null);
 
   onDiscardStateChangeRef.current = onDiscardStateChange;
 
@@ -159,6 +160,10 @@ export function usePlayerV2TimelineWorkflow({
     }
 
     void timelineBridge.dispatch({ type: "flushPath", reason: readFlushReason(event.payload) });
+  });
+
+  usePcEditorEventSubscription("editor.crop.start", () => {
+    recordingStartMsRef.current = readCurrentVideoTimeMs(timelineBridge);
   });
 
   usePcEditorEventSubscription("editor.viewport.fov.step", (event) => {
@@ -285,6 +290,8 @@ export function usePlayerV2TimelineWorkflow({
       return;
     }
 
+    const recordingStartMs = recordingStartMsRef.current;
+    const recordingEndMs = readCurrentVideoTimeMs(timelineBridge);
     const center = readCurrentViewCenter(timelineBridge);
     await timelineBridge.dispatch({
       type: "setViewTarget",
@@ -302,6 +309,10 @@ export function usePlayerV2TimelineWorkflow({
     if (autoRenderEnabled || readBooleanPayload(event.payload, "renderAfterEnd") === true) {
       emit({
         type: "editor.render.request",
+        payload: {
+          endMs: recordingEndMs,
+          ...(recordingStartMs !== null ? { startMs: recordingStartMs } : {})
+        },
         source: {
           kind: "workflow",
           id: "player-v2-auto-render",
@@ -309,6 +320,8 @@ export function usePlayerV2TimelineWorkflow({
         }
       });
     }
+
+    recordingStartMsRef.current = null;
   });
 
   usePcEditorEventSubscription("editor.timeline.discard.begin", () => {

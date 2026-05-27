@@ -101,6 +101,12 @@ class RenderTestRequest(BaseModel):
     loop_source: bool = Field(default=False, alias="loopSource")
 
 
+class FinalizeRecordingRequest(BaseModel):
+    start_ms: int | None = Field(default=None, alias="startMs")
+    end_ms: int | None = Field(default=None, alias="endMs")
+    loop_source: bool = Field(default=False, alias="loopSource")
+
+
 class SessionMusicConfig(BaseModel):
     music_id: str | None = Field(default=None, alias="musicId")
     enabled: bool = True

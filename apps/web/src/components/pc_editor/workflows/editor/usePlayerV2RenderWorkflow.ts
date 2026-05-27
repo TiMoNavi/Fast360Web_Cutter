@@ -13,6 +13,15 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function readNumberPayload(payload: unknown, key: string) {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 async function waitForExportReady(exportId: string) {
   const startedAt = Date.now();
 
@@ -46,7 +55,7 @@ export function usePlayerV2RenderWorkflow({
 }) {
   const emit = usePcEditorEventEmitter();
 
-  usePcEditorEventSubscription("editor.render.request", async () => {
+  usePcEditorEventSubscription("editor.render.request", async (event) => {
     if (!sessionId) {
       setRenderExportId(null);
       setRenderStatus("error");
@@ -56,10 +65,14 @@ export function usePlayerV2RenderWorkflow({
 
     setRenderExportId(null);
     setRenderStatus("rendering");
-    setRenderMessage("Backend render-test is running...");
+    setRenderMessage("Finalizing recording...");
 
     try {
-      const { exportId } = await requestPcEditorRender({ sessionId });
+      const { exportId } = await requestPcEditorRender({
+        endMs: readNumberPayload(event.payload, "endMs"),
+        sessionId,
+        startMs: readNumberPayload(event.payload, "startMs")
+      });
       const exportStatus = await waitForExportReady(exportId);
 
       setRenderExportId(exportId);

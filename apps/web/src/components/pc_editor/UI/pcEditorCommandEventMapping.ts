@@ -6,7 +6,7 @@ export function mapPcEditorCommandToEvent(command: PcEditorCommand): PcEditorEve
     case "crop.autoRender.set":
       return { type: "editor.render.auto.set", payload: { enabled: command.enabled } };
     case "crop.end":
-      return { type: "editor.crop.end" };
+      return { type: "editor.crop.end", payload: { renderAfterEnd: true } };
     case "crop.render":
       return { type: "editor.render.request" };
     case "crop.start":

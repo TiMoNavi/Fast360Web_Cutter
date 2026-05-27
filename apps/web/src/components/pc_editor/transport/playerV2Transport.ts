@@ -1,4 +1,5 @@
 import {
+  finalizeRecording,
   getExportStatus,
   renderTest,
   switchWebXrPlayerSession,
@@ -14,6 +15,13 @@ export async function switchPcEditorPlayerSessionTransport(sourceId: string): Pr
 
 export async function requestPcEditorRenderTestTransport(sessionId: string): Promise<PcEditorRenderTestResponse> {
   return renderTest(sessionId);
+}
+
+export async function finalizePcEditorRecordingTransport(
+  sessionId: string,
+  payload: { endMs?: number; startMs?: number } = {}
+): Promise<PcEditorRenderTestResponse> {
+  return finalizeRecording(sessionId, payload);
 }
 
 export async function getPcEditorExportStatusTransport(exportId: string): Promise<ExportStatus> {

@@ -89,7 +89,7 @@ test("Player V2 edit flow records a yaw move and auto-renders an export", async 
     if (url.includes(`/api/cut-sessions/${encodeURIComponent(session.sessionId)}/path-patches`)) {
       pathPatchResponses.push(response.status());
     }
-    if (url.includes(`/api/cut-sessions/${encodeURIComponent(session.sessionId)}/render-test`)) {
+    if (url.includes(`/api/cut-sessions/${encodeURIComponent(session.sessionId)}/finalize-recording`)) {
       renderResponses.push(response.status());
     }
   });
@@ -126,10 +126,6 @@ test("Player V2 edit flow records a yaw move and auto-renders an export", async 
     video.playbackRate = 2;
     video.pause();
   });
-
-  const autoRenderToggle = page.locator("[data-testid='xr-pc-crop-workflow'] input[type='checkbox']");
-  await autoRenderToggle.check();
-  await expect(page.getByTestId("player-v2-ui-overlay")).toContainText("auto on");
 
   await page.getByTestId("xr-pc-start-crop").click();
   await expect(page.getByTestId("player-v2-ui-overlay")).toContainText("End record");

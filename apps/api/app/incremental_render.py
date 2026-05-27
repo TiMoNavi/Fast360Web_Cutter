@@ -2,21 +2,34 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any
+import shutil
 
 from .rendering import run_frame_remap_equirect
 from .rendering.effects import events_for_segment
-from .rendering.path_pipeline import prepare_render_segment, relative_segment_points, render_point_from_row
-from .storage import EXPORTS_DIR, TMP_DIR, connect, list_effect_events, new_id, utc_now
+from .rendering.path_pipeline import (
+    build_enabled_render_segments,
+    clip_timeline_points,
+    prepare_render_segment,
+    relative_segment_points,
+    render_point_from_row,
+)
+from .storage import EXPORTS_DIR, TMP_DIR, connect, concat_segments_reencode, list_effect_events, new_id, utc_now
 
 SEGMENT_DURATION_MS = 30_000
 RENDER_FPS = 30
 MAX_YAW_RATE = 360
 MAX_PITCH_RATE = 360
 MAX_FOV_RATE = 360
+RERENDER_DEBOUNCE_SECONDS = 30
 
 _active_tasks: dict[str, threading.Thread] = {}
 _cancel_flags: dict[str, threading.Event] = {}
+_rerender_timers: dict[str, threading.Timer] = {}
+_registry_lock = threading.Lock()
+
+
+def _segment_task_key(session_id: str, segment_index: int) -> str:
+    return f"{session_id}_{segment_index}"
 
 
 def trigger_segment_render(
@@ -25,27 +38,78 @@ def trigger_segment_render(
     start_ms: int,
     end_ms: int,
     timeline_revision: int,
-) -> None:
-    task_key = f"{session_id}_{segment_index}"
-    if task_key in _active_tasks and _active_tasks[task_key].is_alive():
-        return
+) -> bool:
+    task_key = _segment_task_key(session_id, segment_index)
+    with _registry_lock:
+        timer = _rerender_timers.pop(task_key, None)
+        if timer is not None:
+            timer.cancel()
 
-    cancel_event = threading.Event()
-    _cancel_flags[task_key] = cancel_event
+        active_task = _active_tasks.get(task_key)
+        if active_task is not None and active_task.is_alive():
+            return False
 
-    thread = threading.Thread(
-        target=_render_segment_worker,
-        args=(session_id, segment_index, start_ms, end_ms, timeline_revision, cancel_event),
-        daemon=True,
-    )
-    _active_tasks[task_key] = thread
+        cancel_event = threading.Event()
+        _cancel_flags[task_key] = cancel_event
+
+        thread = threading.Thread(
+            target=_render_segment_worker,
+            args=(session_id, segment_index, start_ms, end_ms, timeline_revision, cancel_event),
+            daemon=True,
+        )
+        _active_tasks[task_key] = thread
     thread.start()
+    return True
 
 
 def cancel_segment_render(session_id: str, segment_index: int) -> None:
-    task_key = f"{session_id}_{segment_index}"
-    if task_key in _cancel_flags:
-        _cancel_flags[task_key].set()
+    task_key = _segment_task_key(session_id, segment_index)
+    with _registry_lock:
+        cancel_event = _cancel_flags.get(task_key)
+    if cancel_event is not None:
+        cancel_event.set()
+
+
+def cancel_scheduled_segment_rerender(session_id: str, segment_index: int) -> None:
+    task_key = _segment_task_key(session_id, segment_index)
+    with _registry_lock:
+        timer = _rerender_timers.pop(task_key, None)
+    if timer is not None:
+        timer.cancel()
+
+
+def schedule_segment_rerender(
+    session_id: str,
+    segment_index: int,
+    start_ms: int,
+    end_ms: int,
+    timeline_revision: int,
+    delay_seconds: float = RERENDER_DEBOUNCE_SECONDS,
+) -> None:
+    task_key = _segment_task_key(session_id, segment_index)
+
+    timer: threading.Timer
+
+    def run_scheduled_render() -> None:
+        with _registry_lock:
+            current_timer = _rerender_timers.get(task_key)
+            if current_timer is not timer:
+                return
+            _rerender_timers.pop(task_key, None)
+
+        started = trigger_segment_render(session_id, segment_index, start_ms, end_ms, timeline_revision)
+        if not started:
+            schedule_segment_rerender(session_id, segment_index, start_ms, end_ms, timeline_revision, delay_seconds=1)
+
+    timer = threading.Timer(delay_seconds, run_scheduled_render)
+    timer.daemon = True
+
+    with _registry_lock:
+        existing_timer = _rerender_timers.pop(task_key, None)
+        if existing_timer is not None:
+            existing_timer.cancel()
+        _rerender_timers[task_key] = timer
+    timer.start()
 
 
 def _render_segment_worker(
@@ -85,10 +149,10 @@ def _render_segment_worker(
             points = conn.execute(
                 """
                 SELECT * FROM view_path_points
-                WHERE session_id = ? AND t_ms >= ? AND t_ms <= ?
+                WHERE session_id = ?
                 ORDER BY t_ms
                 """,
-                (session_id, start_ms, end_ms),
+                (session_id,),
             ).fetchall()
 
         if cancel_event.is_set():
@@ -99,14 +163,11 @@ def _render_segment_worker(
             _mark_failed(segment_id, "Not enough path points")
             return
 
-        all_points = [render_point_from_row(p) for p in points]
-        segment = prepare_render_segment(
-            all_points,
-            fps=RENDER_FPS,
-            max_yaw_rate=MAX_YAW_RATE,
-            max_pitch_rate=MAX_PITCH_RATE,
-            max_fov_rate=MAX_FOV_RATE,
-        )
+        all_points = clip_timeline_points([render_point_from_row(p) for p in points], start_ms, end_ms)
+        render_segments = build_enabled_render_segments(all_points)
+        if not render_segments:
+            _mark_failed(segment_id, "No enabled path segments")
+            return
 
         if cancel_event.is_set():
             _mark_cancelled(segment_id)
@@ -121,20 +182,47 @@ def _render_segment_worker(
 
         with connect() as conn:
             effects = list_effect_events(conn, session_id, start_ms, end_ms)
-        segment_effects = events_for_segment(effects, start_ms, end_ms)
 
-        duration_ms = end_ms - start_ms
+        rendered_paths: list[Path] = []
+        for part_index, render_segment in enumerate(render_segments):
+            if cancel_event.is_set():
+                _mark_cancelled(segment_id)
+                return
 
-        run_frame_remap_equirect(
-            source_path=source_path,
-            target_path=output_path,
-            work_dir=work_dir,
-            points=relative_segment_points(segment),
-            duration_ms=duration_ms,
-            source_start_ms=start_ms,
-            fps=RENDER_FPS,
-            effect_events=segment_effects,
-        )
+            segment_start_ms = int(float(render_segment[0]["t_ms"]))
+            segment_end_ms = int(float(render_segment[-1]["t_ms"]))
+            duration_ms = segment_end_ms - segment_start_ms
+            if duration_ms <= 0:
+                continue
+
+            prepared_segment = prepare_render_segment(
+                render_segment,
+                fps=RENDER_FPS,
+                max_yaw_rate=MAX_YAW_RATE,
+                max_pitch_rate=MAX_PITCH_RATE,
+                max_fov_rate=MAX_FOV_RATE,
+            )
+            part_path = work_dir / f"part-{part_index:03d}.mp4"
+            run_frame_remap_equirect(
+                source_path=source_path,
+                target_path=part_path,
+                work_dir=work_dir / f"part-{part_index:03d}",
+                points=relative_segment_points(prepared_segment),
+                duration_ms=duration_ms,
+                source_start_ms=segment_start_ms,
+                fps=RENDER_FPS,
+                effect_events=events_for_segment(effects, segment_start_ms, segment_end_ms),
+            )
+            rendered_paths.append(part_path)
+
+        if not rendered_paths:
+            _mark_failed(segment_id, "No valid segment parts")
+            return
+
+        if len(rendered_paths) == 1:
+            shutil.copy(rendered_paths[0], output_path)
+        else:
+            concat_segments_reencode(rendered_paths, work_dir / "parts.txt", output_path, fps=RENDER_FPS)
 
         if cancel_event.is_set():
             _mark_cancelled(segment_id)

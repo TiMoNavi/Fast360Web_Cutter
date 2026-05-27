@@ -74,7 +74,8 @@ export class PathSampler {
       tMs = this.lastSampleVideoTimeMs + 1;
     }
 
-    if (!force && this.lastSampleVideoTimeMs !== null && tMs - this.lastSampleVideoTimeMs < this.sampleIntervalMs) {
+    const movedBackward = this.lastSampleVideoTimeMs !== null && tMs < this.lastSampleVideoTimeMs;
+    if (!force && this.lastSampleVideoTimeMs !== null && !movedBackward && tMs - this.lastSampleVideoTimeMs < this.sampleIntervalMs) {
       return { point: null, shouldFlush: false };
     }
 
@@ -86,6 +87,7 @@ export class PathSampler {
     const point = this.createPoint(state, tMs);
 
     const shouldFlush =
+      movedBackward ||
       force ||
       this.bufferedPointCount >= this.maxBufferedPoints ||
       tMs - this.lastFlushVideoTimeMs >= this.flushIntervalMs;

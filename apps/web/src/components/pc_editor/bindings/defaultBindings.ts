@@ -46,12 +46,12 @@ export const defaultPcEditorBindings: PcEditorBinding[] = [
   {
     id: "editor.crop.end.player-ui",
     trigger: { kind: "ui", target: "player-record-end", action: "click" },
-    event: { type: "editor.crop.end" }
+    event: { type: "editor.crop.end", payload: { renderAfterEnd: true } }
   },
   {
     id: "editor.crop.end.spatial-ui",
     trigger: { kind: "vr-ray", target: "spatial-player-record-end", action: "select" },
-    event: { type: "editor.crop.end" }
+    event: { type: "editor.crop.end", payload: { renderAfterEnd: true } }
   },
   {
     id: "player.source.previous.ui",
@@ -133,7 +133,7 @@ export const defaultPcEditorBindings: PcEditorBinding[] = [
   {
     id: "crop.end.keyboard",
     trigger: { kind: "keyboard", target: "KeyR", action: "keydown" },
-    event: { type: "editor.crop.end" },
+    event: { type: "editor.crop.end", payload: { renderAfterEnd: true } },
     ignoreRepeat: true,
     preventDefault: true
   },
@@ -260,7 +260,7 @@ export const defaultPcEditorBindings: PcEditorBinding[] = [
   {
     id: "crop.end.ui",
     trigger: { kind: "ui", target: "crop-end", action: "click" },
-    event: { type: "editor.crop.end" }
+    event: { type: "editor.crop.end", payload: { renderAfterEnd: true } }
   },
   {
     id: "render.auto.set.ui",

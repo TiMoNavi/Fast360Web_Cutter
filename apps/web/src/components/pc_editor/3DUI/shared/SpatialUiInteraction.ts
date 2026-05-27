@@ -4,6 +4,9 @@ export type SpatialControlVisualState = "hover" | "idle" | "pressed";
 
 export const SPATIAL_UI_HIT_ATTRIBUTE = "data-spatial-ui-hit";
 export const SPATIAL_UI_RAY_ACTIVE_ATTRIBUTE = "data-spatial-ui-ray-active";
+export const SPATIAL_UI_RENDER_ORDER = 220;
+export const SPATIAL_UI_TEXT_RENDER_ORDER = 230;
+export const SPATIAL_UI_HIT_RENDER_ORDER = 240;
 
 const spatialUiRayTargets = new WeakMap<HTMLElement, WeakSet<HTMLElement>>();
 

@@ -70,10 +70,9 @@ export function PlayerV3SpatialUi({
   const subtitle = useMemo(() => {
     const resolution = model.sourceResolution ?? "360 source";
     const maskOpacity = Math.round((model.maskOpacity ?? 0.7) * 100);
-    const autoRender = model.autoRenderEnabled ? "on" : "off";
 
-    return `${resolution} / mask ${maskOpacity}% / auto ${autoRender}`;
-  }, [model.autoRenderEnabled, model.maskOpacity, model.sourceResolution]);
+    return `${resolution} / mask ${maskOpacity}%`;
+  }, [model.maskOpacity, model.sourceResolution]);
 
   const emitCommand = useCallback(
     (command: PcEditorCommand) => {

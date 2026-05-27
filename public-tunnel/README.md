@@ -3,7 +3,7 @@
 这个目录就是本项目的 WireGuard 网络工作区；所有公网穿透、端口映射、服务器反代、开关脚本和运行文档都集中在这里。它把本机开发服务稳定暴露到 `TenCent` 公网服务器：
 
 - WireGuard 把当前 Windows 开发机固定成隧道地址 `10.77.0.2`，局域网 IP 变化、换 Wi-Fi、重启后都不影响服务器访问。
-- 服务器用 Caddy 终止公网 HTTPS，再反代到 `10.77.0.2:39080`。
+- 服务器用 Nginx 终止公网 HTTPS，再通过 HTTPS 反代到 `10.77.0.2:39080`。
 - Windows 端用 `netsh portproxy` 把 `10.77.0.2:39080` 动态转到当前项目端口，例如 `3000` 或 `3080`。换项目端口只需要重新跑本机启动脚本，不需要改服务器。
 - 如果需要暴露新增的非 HTTPS 端口，服务器 nftables 可以把公网高位 TCP 端口直接 DNAT 到本机 WireGuard 地址。
 
@@ -118,13 +118,14 @@ powershell -ExecutionPolicy Bypass -File public-tunnel\client\Activate-ProjectTu
 
 ## 本项目建议启动方式
 
-公网 HTTPS 由服务器处理，所以本机不需要继续用自签名 HTTPS。推荐本机用 HTTP 监听：
+当前要求本机也走 HTTPS。推荐本机用项目自带 HTTPS dev server 监听 `127.0.0.1:3080`：
 
 ```powershell
-npm --workspace apps/web run dev:host -- --port 3000
+cd apps\web
+node server.mjs --hostname 127.0.0.1 --port 3080
 ```
 
-如果继续使用本机 `npm run dev:web:https` 的 `3080` 也可以，但服务器反代到本机时不会信任自签名证书；这种情况下更建议让服务器反代到 HTTP 端口。
+服务器 Nginx 已配置 `proxy_ssl_verify off`，所以可以通过 WireGuard 访问本机自签名 HTTPS upstream；公网浏览器看到的仍然是服务器的 `pivotcompute.store` 证书。
 
 ## 常见问题
 

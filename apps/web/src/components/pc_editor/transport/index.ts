@@ -1,4 +1,5 @@
 export {
+  finalizePcEditorRecordingTransport,
   getPcEditorExportStatusTransport,
   requestPcEditorRenderTestTransport,
   switchPcEditorPlayerSessionTransport,

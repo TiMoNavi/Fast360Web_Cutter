@@ -14,6 +14,7 @@ export type PathPatchQueueOptions = {
 };
 
 const DEFAULT_REPLACE_PADDING_MS = 200;
+const POINT_TIME_MATCH_EPSILON_MS = 1;
 
 function defaultTakeId() {
   return `take_${Date.now().toString(36)}`;
@@ -21,6 +22,21 @@ function defaultTakeId() {
 
 function sortPoints(points: ViewPathPoint[]) {
   return [...points].sort((a, b) => a.tMs - b.tMs || a.seq - b.seq);
+}
+
+function pointTimesMatch(leftMs: number, rightMs: number) {
+  return Math.abs(leftMs - rightMs) <= POINT_TIME_MATCH_EPSILON_MS;
+}
+
+function upsertPoint(points: ViewPathPoint[], point: ViewPathPoint) {
+  const existingIndex = points.findIndex((candidate) => pointTimesMatch(candidate.tMs, point.tMs));
+  if (existingIndex >= 0) {
+    points[existingIndex] = point;
+    return;
+  }
+
+  points.push(point);
+  points.sort((a, b) => a.tMs - b.tMs || a.seq - b.seq);
 }
 
 export class PathPatchQueue {
@@ -45,7 +61,25 @@ export class PathPatchQueue {
   }
 
   addPoint(point: ViewPathPoint) {
-    this.bufferedPoints.push(point);
+    const pendingBatch = this.batches.find((batch) => {
+      if (batch.status !== "pending") {
+        return false;
+      }
+      return point.tMs >= batch.patch.replaceRange.startMs && point.tMs < batch.patch.replaceRange.endMs;
+    });
+
+    if (pendingBatch) {
+      upsertPoint(pendingBatch.patch.points, point);
+      pendingBatch.patch.replaceRange.startMs = Math.min(pendingBatch.patch.replaceRange.startMs, point.tMs);
+      pendingBatch.patch.replaceRange.endMs = Math.max(
+        pendingBatch.patch.replaceRange.endMs,
+        point.tMs + this.replacePaddingMs,
+        pendingBatch.patch.replaceRange.startMs + 1
+      );
+      return;
+    }
+
+    upsertPoint(this.bufferedPoints, point);
   }
 
   pendingPointCount() {

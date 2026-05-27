@@ -11,6 +11,7 @@ import {
 } from "../shared/SpatialPlayerLayout";
 import {
   SPATIAL_UI_HIT_ATTRIBUTE,
+  SPATIAL_UI_RENDER_ORDER,
   flatEmissiveMaterial,
   transparentHitMaterial,
   useSpatialButtonEvents,
@@ -422,7 +423,7 @@ function drawTextLayer(
 
 function elevatePopup(root: AFrameEntityElement | null) {
   root?.object3D?.traverse?.((child) => {
-    child.renderOrder = 76;
+    child.renderOrder = SPATIAL_UI_RENDER_ORDER;
   });
 }
 
