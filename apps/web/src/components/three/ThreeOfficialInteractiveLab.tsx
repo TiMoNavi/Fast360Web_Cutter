@@ -15,8 +15,6 @@ import {
   Object3D,
   PerspectiveCamera,
   PlaneGeometry,
-  Quaternion,
-  Raycaster,
   RingGeometry,
   Scene,
   ShaderMaterial,
@@ -33,7 +31,7 @@ import { XRControllerModelFactory } from "three/examples/jsm/webxr/XRControllerM
 import Hls from "hls.js";
 import { setRendererSessionWithLabFallback } from "@/components/xr/webXrLabCompat";
 import { apiUrl, renderTest, sendViewPathPatch, updateCutSessionVideo } from "@/lib/api";
-import type { ViewPathPatch, ViewPathPoint } from "@/lib/path-protocol";
+import type { ViewPathPatch } from "@/lib/path-protocol";
 import {
   dispatchWebXrTimelineEvent,
   type ViewInputSource,
@@ -59,6 +57,7 @@ import { bgmLabel, formatClock } from "./three-official-lab/format";
 import {
   CROP_FRAME_DISTANCE,
   CROP_MASK_RADIUS,
+  DEFAULT_FOV_H,
   DEFAULT_VIEW_TARGET,
   DEG_TO_RAD,
   DUAL_SELECT_COMBO_MS,
@@ -72,6 +71,8 @@ import {
   MASK_OPACITY_MAX,
   MASK_OPACITY_MIN,
   MASK_OPACITY_THUMBSTICK_MAX_PER_SECOND,
+  MAX_FOV_H,
+  MIN_FOV_H,
   QUICK_MENU_BUTTON_INDEX,
   QUICK_MENU_ITEMS,
   SPHERE_CLICK_MAX_MOVE_PX,
@@ -81,15 +82,31 @@ import {
   actionMessage,
   clampNumber,
   createQuickMenuTileMaterial,
-  directionToViewTarget,
   interpolateViewTargetPose,
   makeControllerRay,
   normalizeViewTargetPose,
-  readObjectForward,
   semanticSummary,
   styleXrButton,
   viewTargetToDirection
 } from "./three-official-lab/runtimeHelpers";
+import {
+  createControllerDiscardState,
+  createControllerRayOverrideState,
+  createLeftMenuButtonState,
+  createQuickMenuButtonState,
+  createSelectComboState,
+  createThumbstickFovState,
+  createThumbstickOverrideState
+} from "./three-official-lab/controllerInteractionState";
+import { createThreeOfficialRayTargeting, vectorFromDetail } from "./three-official-lab/rayTargeting";
+import { bindThreeOfficialControllerInput } from "./three-official-lab/useThreeOfficialControllerInput";
+import {
+  buildBackendPathPatch as buildWorkflowBackendPathPatch,
+  createRecordingSample,
+  createWorkflowEffectLogItem,
+  createWorkflowEffectSemanticEvent,
+  workflowEffectForAction
+} from "./three-official-lab/workflowOperations";
 import type {
   BgmChoice,
   BrowserXr,
@@ -136,7 +153,7 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
   const [cropWorkflowStatus, setCropWorkflowStatus] = useState<CropWorkflowStatus>("idle");
   const [durationMs, setDurationMs] = useState(0);
   const [effectLog, setEffectLog] = useState<LabEffectLogItem[]>([]);
-  const [fov, setFov] = useState(82);
+  const [fov, setFov] = useState(DEFAULT_FOV_H);
   const [lastAction, setLastAction] = useState("Ready: Three.js HTMLMesh + InteractiveGroup official interaction path.");
   const [lastSemantic, setLastSemantic] = useState("none");
   const [leftGripModifier, setLeftGripModifier] = useState(false);
@@ -276,7 +293,7 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
   }
 
   function setFovValue(next: number, semanticEvent?: WebXrSemanticEvent) {
-    const clamped = clampNumber(next, 48, 112);
+    const clamped = clampNumber(next, MIN_FOV_H, MAX_FOV_H);
     fovRef.current = clamped;
     setFov(clamped);
     if (semanticEvent) {
@@ -397,18 +414,13 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
   }
 
   function pushRecordingSample(reason: string) {
-    const pose = viewTargetRef.current;
-    const hFov = fovRef.current;
-    const sample: LabRecordingSample = {
-      fovH: Number(hFov.toFixed(2)),
-      fovV: Number(verticalFovFromHorizontal(hFov).toFixed(2)),
-      input: pose.input,
-      pitch: Number(pose.pitch.toFixed(2)),
+    const sample = createRecordingSample({
+      currentTimeMs: currentTimeMsRef.current,
+      fovH: fovRef.current,
+      pose: viewTargetRef.current,
       reason,
-      seq: recordingSamplesRef.current.length + 1,
-      tMs: currentTimeMsRef.current,
-      yaw: Number(pose.yaw.toFixed(2))
-    };
+      seq: recordingSamplesRef.current.length + 1
+    });
     const nextSamples = [...recordingSamplesRef.current, sample].slice(-24);
     recordingSamplesRef.current = nextSamples;
     setRecordingSamples(nextSamples);
@@ -434,51 +446,19 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
   }
 
   function buildBackendPathPatch(binding: LabBackendBinding, reason: ViewPathPatch["replaceRange"]["reason"]): ViewPathPatch | null {
-    const samples = recordingSamplesRef.current;
-    if (!samples.length) {
-      return null;
-    }
-
-    let previousTime = -1;
-    const points: ViewPathPoint[] = samples.map((sample, index) => {
-      const tMs = Math.max(sample.tMs, previousTime + 1);
-      previousTime = tMs;
-      return {
-        center: {
-          pitch: sample.pitch,
-          yaw: sample.yaw
-        },
-        cut: index === 0 && reason === "cut",
-        enabled: true,
-        fov: {
-          h: sample.fovH,
-          v: sample.fovV
-        },
-        input: sample.input === "controller_ray" ? "controller_ray" : "head_gaze",
-        interpolation: "linear",
-        locked: lockedRef.current,
-        roll: 0,
-        seq: index + 1,
-        smoothFollow: sample.reason !== "SPHERE CTRL CLICK",
-        tMs,
-        transitionMs: sample.reason === "start" ? 0 : SPHERE_SMOOTH_MOVE_MS
-      };
+    const nextPathRevision = pathRevisionRef.current + 1;
+    const patch = buildWorkflowBackendPathPatch({
+      binding,
+      locked: lockedRef.current,
+      nextPathRevision,
+      reason,
+      samples: recordingSamplesRef.current,
+      takeId: takeIdRef.current
     });
-    const startMs = points[0]?.tMs ?? 0;
-    const endMs = Math.max(startMs + 1, (points.at(-1)?.tMs ?? startMs) + 200);
-    return {
-      pathRevision: ++pathRevisionRef.current,
-      points,
-      replaceRange: {
-        endMs,
-        reason,
-        startMs
-      },
-      sessionId: binding.sessionId,
-      takeId: takeIdRef.current,
-      version: 1,
-      videoId: binding.videoId
-    };
+    if (patch) {
+      pathRevisionRef.current = nextPathRevision;
+    }
+    return patch;
   }
 
   async function flushBackendPath(reason: ViewPathPatch["replaceRange"]["reason"]) {
@@ -599,25 +579,9 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
   }
 
   function createWorkflowEffect(action: WorkflowEffectAction) {
-    const effect =
-      action === "effectWhite"
-        ? { displayName: "White flash", effectType: "transition.flash_white" as const }
-        : action === "effectVhs"
-          ? { displayName: "VHS blank", effectType: "black.solid" as const }
-          : { displayName: "Black fade", effectType: "transition.fade_black" as const };
-    setEffectLog((items) => [{ displayName: effect.displayName, effectType: effect.effectType, seq: items.length + 1 }, ...items].slice(0, 4));
-    emitSemantic({
-      type: "createEffectEvent",
-      displayName: effect.displayName,
-      durationMs: action === "effectWhite" ? 520 : 860,
-      effectType: effect.effectType,
-      params: {
-        source: "three-official-spatial-controls"
-      },
-      renderPolicy: {
-        fallback: "warn"
-      }
-    });
+    const effect = workflowEffectForAction(action);
+    setEffectLog((items) => [createWorkflowEffectLogItem(action, items.length + 1), ...items].slice(0, 4));
+    emitSemantic(createWorkflowEffectSemanticEvent(action));
     setLastAction(`EFFECT: ${effect.displayName} queued from spatial controls.`);
   }
 
@@ -1032,70 +996,24 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
     scene.add(grip2);
     const quickMenuGripAnchors = [grip1, grip2];
 
-    const direction = new Vector3();
     const frameDirection = new Vector3();
-    const hitDirection = new Vector3();
+    const direction = new Vector3();
     const markerDirection = new Vector3();
     const markerPosition = new Vector3();
     const cameraPosition = new Vector3();
-    const quaternion = new Quaternion();
-    const pointerNdc = new Vector2();
-    const raycaster = new Raycaster();
-    const rayDirection = new Vector3();
-    const rayOrigin = new Vector3();
+    const quickMenuAnchorPosition = new Vector3();
     const quickMenuLocalPoint = new Vector3();
     const quickMenuPointerWorld = new Vector3();
     const sphereCenter = new Vector3();
     const followControllerRef: { current: Object3D | null } = { current: null };
     const followControllerHandRef: { current: ControllerHand | null } = { current: null };
-    const controllerRayOverrideState: Record<ControllerHand, { rayDirection: Vector3 | null; rayOrigin: Vector3 | null }> = {
-      left: { rayDirection: null, rayOrigin: null },
-      right: { rayDirection: null, rayOrigin: null }
-    };
-    const thumbstickOverrideState: Record<ControllerHand, { active: boolean; y: number }> = {
-      left: { active: false, y: 0 },
-      right: { active: false, y: 0 }
-    };
-    const thumbstickFovState = {
-      active: false,
-      lastFrameAt: performance.now(),
-      lastInputAt: 0,
-      pendingFlush: false
-    };
-    const quickMenuState = {
-      lastButtonDown: false,
-      recordToggleButtonDown: false,
-      syntheticPointerPosition: null as Vector3 | null,
-      syntheticRayDirection: null as Vector3 | null,
-      syntheticRayOrigin: null as Vector3 | null
-    };
-    const leftMenuButtonState = {
-      lastButtonDown: false
-    };
-    const selectComboState: Record<
-      ControllerHand,
-      {
-        comboConsumed: boolean;
-        down: boolean;
-        instant: boolean;
-        rayDirection: Vector3 | null;
-        rayOrigin: Vector3 | null;
-        startedAt: number;
-        uiPressed: boolean;
-      }
-    > = {
-      left: { comboConsumed: false, down: false, instant: false, rayDirection: null, rayOrigin: null, startedAt: 0, uiPressed: false },
-      right: { comboConsumed: false, down: false, instant: false, rayDirection: null, rayOrigin: null, startedAt: 0, uiPressed: false }
-    };
-    const controllerDiscardState: {
-      active: boolean;
-      hand: ControllerHand | null;
-      startMs: number;
-    } = {
-      active: false,
-      hand: null,
-      startMs: 0
-    };
+    const controllerRayOverrideState = createControllerRayOverrideState();
+    const thumbstickOverrideState = createThumbstickOverrideState();
+    const thumbstickFovState = createThumbstickFovState();
+    const quickMenuState = createQuickMenuButtonState();
+    const leftMenuButtonState = createLeftMenuButtonState();
+    const selectComboState = createSelectComboState();
+    const controllerDiscardState = createControllerDiscardState();
     let pointerClickStart: { x: number; y: number } | null = null;
     let smoothViewTargetMove: {
       durationMs: number;
@@ -1108,46 +1026,6 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
     let targetRingVisibleUntil = 0;
     let lastViewTargetUiUpdate = 0;
     let pendingHeadGazeStartedAt: number | null = null;
-
-    function readPoseFromObject(object: Object3D, input: ViewInputSource) {
-      return directionToViewTarget(readObjectForward(object, direction, quaternion), input);
-    }
-
-    function previewPoseFromObject(object: Object3D, input: ViewInputSource) {
-      const pose = readPoseFromObject(object, input);
-      viewTargetRef.current = pose;
-
-      const now = performance.now();
-      if (now - lastViewTargetUiUpdate > 120) {
-        lastViewTargetUiUpdate = now;
-        setViewTarget(pose);
-      }
-
-      return pose;
-    }
-
-    function getSpherePoseFromRay(origin: Vector3, rayDirectionValue: Vector3, input: ViewInputSource) {
-      raycaster.ray.set(origin, rayDirectionValue.normalize());
-      const uiObjects = [playerMesh, htmlMesh, popupMesh].filter((object): object is HTMLMesh => Boolean(object?.visible));
-      const uiHit = uiObjects.length ? raycaster.intersectObjects(uiObjects, true)[0] : null;
-      const sphereHit = raycaster.intersectObject(videoSphere, false)[0] ?? null;
-      if (!sphereHit || (uiHit && uiHit.distance < sphereHit.distance)) {
-        return null;
-      }
-
-      videoSphere.getWorldPosition(sphereCenter);
-      return directionToViewTarget(hitDirection.copy(sphereHit.point).sub(sphereCenter).normalize(), input);
-    }
-
-    function getUiHitFromRay(origin: Vector3, rayDirectionValue: Vector3) {
-      const uiObjects = [playerMesh, htmlMesh, popupMesh].filter((object): object is HTMLMesh => Boolean(object?.visible));
-      if (!uiObjects.length) {
-        return null;
-      }
-
-      raycaster.ray.set(origin, rayDirectionValue.normalize());
-      return raycaster.intersectObjects(uiObjects, false)[0] ?? null;
-    }
 
     function domSourceForHtmlMesh(mesh: HTMLMesh) {
       if (mesh === playerMesh) {
@@ -1162,85 +1040,25 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       return null;
     }
 
-    function hasInteractiveDomTarget(mesh: HTMLMesh, uv: Vector2) {
-      const domSource = domSourceForHtmlMesh(mesh);
-      if (!domSource) {
-        return false;
+    const rayTargeting = createThreeOfficialRayTargeting({
+      camera,
+      domSourceForHtmlMesh,
+      getUiMeshes: () => [playerMesh, htmlMesh, popupMesh].filter((object): object is HTMLMesh => Boolean(object?.visible)),
+      renderer,
+      videoSphere
+    });
+
+    function previewPoseFromObject(object: Object3D, input: ViewInputSource) {
+      const pose = rayTargeting.readPoseFromObject(object, input);
+      viewTargetRef.current = pose;
+
+      const now = performance.now();
+      if (now - lastViewTargetUiUpdate > 120) {
+        lastViewTargetUiUpdate = now;
+        setViewTarget(pose);
       }
 
-      const rootRect = domSource.getBoundingClientRect();
-      const x = rootRect.left + uv.x * rootRect.width;
-      const y = rootRect.top + (1 - uv.y) * rootRect.height;
-      const interactiveElements = Array.from(domSource.querySelectorAll<HTMLElement>("button, input, select, a[href]"));
-
-      return interactiveElements.some((element) => {
-        if (element instanceof HTMLButtonElement && element.disabled) {
-          return false;
-        }
-        if (element instanceof HTMLInputElement && element.disabled) {
-          return false;
-        }
-        if (element instanceof HTMLSelectElement && element.disabled) {
-          return false;
-        }
-
-        const rect = element.getBoundingClientRect();
-        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-      });
-    }
-
-    function dispatchHtmlMeshPointerEventFromRay(origin: Vector3, rayDirectionValue: Vector3, eventType: "click" | "mousedown" | "mouseup") {
-      const uiHit = getUiHitFromRay(origin, rayDirectionValue);
-      if (!uiHit?.uv || !(uiHit.object instanceof HTMLMesh)) {
-        return false;
-      }
-      if (!hasInteractiveDomTarget(uiHit.object, uiHit.uv)) {
-        return false;
-      }
-
-      uiHit.object.dispatchEvent({
-        data: new Vector2(uiHit.uv.x, 1 - uiHit.uv.y),
-        type: eventType
-      } as never);
-      return true;
-    }
-
-    function dispatchHtmlMeshPointerEventFromController(
-      hand: ControllerHand,
-      controller: Object3D,
-      eventType: "click" | "mousedown" | "mouseup",
-      detail?: SyntheticControllerSelectDetail
-    ) {
-      const detailOrigin = vectorFromDetail(detail?.rayOrigin);
-      const detailDirection = vectorFromDetail(detail?.rayDirection);
-      const override = controllerRayOverrideState[hand];
-      const origin = detailOrigin ?? override.rayOrigin;
-      const directionValue = detailDirection ?? override.rayDirection;
-
-      if (origin && directionValue) {
-        return dispatchHtmlMeshPointerEventFromRay(origin, directionValue, eventType);
-      }
-
-      controller.getWorldPosition(rayOrigin);
-      readObjectForward(controller, rayDirection, quaternion);
-      return dispatchHtmlMeshPointerEventFromRay(rayOrigin, rayDirection, eventType);
-    }
-
-    function getSpherePoseFromPointer(event: PointerEvent) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) {
-        return null;
-      }
-
-      pointerNdc.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1));
-      raycaster.setFromCamera(pointerNdc, camera);
-      return getSpherePoseFromRay(raycaster.ray.origin, raycaster.ray.direction, "controller_ray");
-    }
-
-    function getSpherePoseFromController(controller: Object3D) {
-      controller.getWorldPosition(rayOrigin);
-      readObjectForward(controller, rayDirection, quaternion);
-      return getSpherePoseFromRay(rayOrigin, rayDirection, "controller_ray");
+      return pose;
     }
 
     function setQuickMenuHighlightedAction(action: QuickMenuAction | null) {
@@ -1257,8 +1075,8 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       if (syntheticPointer) {
         quickMenuGroup.position.copy(syntheticPointer);
       } else {
-        anchorObject.getWorldPosition(rayOrigin);
-        quickMenuGroup.position.copy(rayOrigin);
+        anchorObject.getWorldPosition(quickMenuAnchorPosition);
+        quickMenuGroup.position.copy(quickMenuAnchorPosition);
       }
       quickMenuGroup.lookAt(cameraPosition);
       quickMenuGroup.updateMatrixWorld(true);
@@ -1308,14 +1126,6 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
         setLastAction("B QUICK MENU: restore range event queued.");
       } else if (action === "vhsBlank") {
         createWorkflowEffect("effectVhs");
-      } else if (action === "fovIn") {
-        setFovValue(fovRef.current - 5, { type: "nudgeFov", deltaH: -5 });
-        emitSemantic({ type: "flushPath", reason: "fov" });
-        setLastAction("B QUICK MENU: FOV pushed in.");
-      } else if (action === "fovOut") {
-        setFovValue(fovRef.current + 5, { type: "nudgeFov", deltaH: 5 });
-        emitSemantic({ type: "flushPath", reason: "fov" });
-        setLastAction("B QUICK MENU: FOV pulled out.");
       }
     }
 
@@ -1397,7 +1207,7 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
         return;
       }
 
-      const pose = getSpherePoseFromPointer(event);
+      const pose = rayTargeting.getSpherePoseFromPointer(event);
       if (!pose) {
         return;
       }
@@ -1474,14 +1284,6 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       return true;
     }
 
-    function vectorFromDetail(value: SyntheticControllerSelectDetail["rayDirection"] | SyntheticControllerSelectDetail["rayOrigin"]) {
-      if (!value || !Number.isFinite(value.x) || !Number.isFinite(value.y) || !Number.isFinite(value.z)) {
-        return null;
-      }
-
-      return new Vector3(value.x, value.y, value.z);
-    }
-
     function setControllerRayOverride(hand: ControllerHand, detail?: SyntheticControllerSelectDetail) {
       const detailOrigin = vectorFromDetail(detail?.rayOrigin);
       const detailDirection = vectorFromDetail(detail?.rayDirection);
@@ -1507,10 +1309,10 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       const directionValue = detailDirection ?? override.rayDirection;
 
       if (origin && directionValue) {
-        return getSpherePoseFromRay(origin, directionValue, "controller_ray");
+        return rayTargeting.getSpherePoseFromRay(origin, directionValue, "controller_ray");
       }
 
-      return getSpherePoseFromController(controller);
+      return rayTargeting.getSpherePoseFromController(controller);
     }
 
     function poseFromSelectState(hand: ControllerHand, controller: Object3D, detail?: SyntheticControllerSelectDetail) {
@@ -1522,10 +1324,10 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       const directionValue = detailDirection ?? current.rayDirection ?? override.rayDirection;
 
       if (origin && directionValue) {
-        return getSpherePoseFromRay(origin, directionValue, "controller_ray");
+        return rayTargeting.getSpherePoseFromRay(origin, directionValue, "controller_ray");
       }
 
-      return getSpherePoseFromController(controller);
+      return rayTargeting.getSpherePoseFromController(controller);
     }
 
     function handleSelectStart(hand: ControllerHand, controller: Object3D, detail?: SyntheticControllerSelectDetail) {
@@ -1560,7 +1362,7 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
         return;
       }
 
-      if (dispatchHtmlMeshPointerEventFromController(hand, controller, "mousedown", detail)) {
+      if (rayTargeting.dispatchHtmlMeshPointerEventFromController(hand, controller, "mousedown", controllerRayOverrideState, detail)) {
         current.comboConsumed = true;
         current.uiPressed = true;
         pendingHeadGazeStartedAt = null;
@@ -1585,8 +1387,8 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       if (current.uiPressed) {
         current.uiPressed = false;
         pendingHeadGazeStartedAt = null;
-        dispatchHtmlMeshPointerEventFromController(hand, controller, "mouseup", detail);
-        dispatchHtmlMeshPointerEventFromController(hand, controller, "click", detail);
+        rayTargeting.dispatchHtmlMeshPointerEventFromController(hand, controller, "mouseup", controllerRayOverrideState, detail);
+        rayTargeting.dispatchHtmlMeshPointerEventFromController(hand, controller, "click", controllerRayOverrideState, detail);
         setLastAction(`UI RAY ${hand.toUpperCase()}: spatial button clicked.`);
         current.rayOrigin = null;
         current.rayDirection = null;
@@ -1632,7 +1434,7 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
 
     function commitHeadGazeFollow() {
       if (followModeRef.current === "head_gaze") {
-        commitViewTarget(readPoseFromObject(camera, "head_gaze"), "TRIGGER RELEASE");
+        commitViewTarget(rayTargeting.readPoseFromObject(camera, "head_gaze"), "TRIGGER RELEASE");
       } else {
         pendingHeadGazeStartedAt = null;
       }
@@ -1697,70 +1499,30 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       emitSemantic({ type: "controllerAimEnd", hand });
     }
 
-    const controllerListeners: Array<() => void> = [];
-    const bindControllerListener = (controller: XrControllerObject, type: string, listener: (event: unknown) => void) => {
-      controller.addEventListener(type, listener);
-      controllerListeners.push(() => controller.removeEventListener(type, listener));
-    };
     const xrController1 = controller1 as XrControllerObject;
     const xrController2 = controller2 as XrControllerObject;
 
-    bindControllerListener(xrController1, "selectstart", () => handleSelectStart("left", controller1));
-    bindControllerListener(xrController2, "selectstart", () => handleSelectStart("right", controller2));
-    bindControllerListener(xrController1, "selectend", () => handleSelectEnd("left", controller1));
-    bindControllerListener(xrController2, "selectend", () => handleSelectEnd("right", controller2));
-    bindControllerListener(xrController1, "squeezestart", beginOpacityModifier);
-    bindControllerListener(xrController2, "squeezestart", () => beginControllerFollow(controller2, "right"));
-    bindControllerListener(xrController1, "squeezeend", endOpacityModifier);
-    bindControllerListener(xrController2, "squeezeend", () => commitControllerFollow(controller2, "right"));
-
-    function handleSyntheticControllerSelect(event: Event) {
-      const detail = (event as CustomEvent<SyntheticControllerSelectDetail>).detail;
-      if (detail?.hand !== "left" && detail?.hand !== "right") {
-        return;
-      }
-
-      const controller = detail.hand === "left" ? controller1 : controller2;
-      if (detail.phase === "start") {
-        handleSelectStart(detail.hand, controller, detail);
-      } else if (detail.phase === "end") {
-        handleSelectEnd(detail.hand, controller, detail);
+    function handleSqueezeStart(hand: ControllerHand, controller: Object3D, detail?: SyntheticControllerSelectDetail) {
+      if (hand === "left") {
+        beginOpacityModifier();
+      } else {
+        beginControllerFollow(controller, hand, detail);
       }
     }
 
-    function handleSyntheticControllerAim(event: Event) {
-      const detail = (event as CustomEvent<SyntheticControllerSelectDetail>).detail;
-      if (detail?.hand !== "left" && detail?.hand !== "right") {
-        return;
-      }
-
-      setControllerRayOverride(detail.hand, detail);
-    }
-
-    function handleSyntheticControllerSqueeze(event: Event) {
-      const detail = (event as CustomEvent<SyntheticControllerSelectDetail>).detail;
-      if (detail?.hand !== "left" && detail?.hand !== "right") {
-        return;
-      }
-
-      const controller = detail.hand === "left" ? controller1 : controller2;
-      if (detail.phase === "start") {
-        if (detail.hand === "left") {
-          beginOpacityModifier();
-        } else {
-          beginControllerFollow(controller, detail.hand, detail);
-        }
-      } else if (detail.phase === "end") {
-        if (detail.hand === "left") {
-          endOpacityModifier();
-        } else {
-          commitControllerFollow(controller, detail.hand, detail);
-        }
+    function handleSqueezeEnd(hand: ControllerHand, controller: Object3D, detail?: SyntheticControllerSelectDetail) {
+      if (hand === "left") {
+        endOpacityModifier();
+      } else {
+        commitControllerFollow(controller, hand, detail);
       }
     }
 
-    function handleSyntheticThumbstick(event: Event) {
-      const detail = (event as CustomEvent<SyntheticThumbstickDetail>).detail;
+    function handleSyntheticControllerAim(hand: ControllerHand, detail?: SyntheticControllerSelectDetail) {
+      setControllerRayOverride(hand, detail);
+    }
+
+    function handleSyntheticThumbstick(detail?: SyntheticThumbstickDetail) {
       if (detail?.hand !== "left" && detail?.hand !== "right") {
         return;
       }
@@ -1770,8 +1532,7 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       thumbstickOverrideState[detail.hand].y = y;
     }
 
-    function handleSyntheticQuickMenu(event: Event) {
-      const detail = (event as CustomEvent<SyntheticQuickMenuDetail>).detail;
+    function handleSyntheticQuickMenu(detail?: SyntheticQuickMenuDetail) {
       const pointerPosition = vectorFromDetail(detail?.pointerPosition);
       const origin = vectorFromDetail(detail?.rayOrigin);
       const directionValue = vectorFromDetail(detail?.rayDirection);
@@ -1796,14 +1557,6 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
         quickMenuState.syntheticRayOrigin = null;
         quickMenuState.syntheticRayDirection = null;
       }
-    }
-
-    function handleSyntheticMenuToggle() {
-      toggleSpatialMenusVisible();
-    }
-
-    function handleSyntheticRecordToggle() {
-      toggleCropWorkflowFromController("SYNTHETIC RECORD TOGGLE");
     }
 
     function readRightThumbstickYAxis() {
@@ -1958,15 +1711,28 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
       }
     }
 
-    window.addEventListener("three-official-controller-select", handleSyntheticControllerSelect as EventListener);
-    window.addEventListener("three-official-controller-aim", handleSyntheticControllerAim as EventListener);
-    window.addEventListener("three-official-controller-squeeze", handleSyntheticControllerSqueeze as EventListener);
-    window.addEventListener("three-official-quick-menu", handleSyntheticQuickMenu as EventListener);
-    window.addEventListener("three-official-menu-toggle", handleSyntheticMenuToggle as EventListener);
-    window.addEventListener("three-official-record-toggle", handleSyntheticRecordToggle as EventListener);
-    window.addEventListener("three-official-thumbstick", handleSyntheticThumbstick as EventListener);
-    renderer.domElement.addEventListener("pointerdown", handleCanvasPointerDown);
-    renderer.domElement.addEventListener("pointerup", handleCanvasPointerUp);
+    const unbindControllerInput = bindThreeOfficialControllerInput({
+      canvas: renderer.domElement,
+      controllers: {
+        left: controller1,
+        right: controller2
+      },
+      onCanvasPointerDown: handleCanvasPointerDown,
+      onCanvasPointerUp: handleCanvasPointerUp,
+      onMenuToggle: toggleSpatialMenusVisible,
+      onQuickMenu: handleSyntheticQuickMenu,
+      onRecordToggle: () => toggleCropWorkflowFromController("SYNTHETIC RECORD TOGGLE"),
+      onSelectEnd: handleSelectEnd,
+      onSelectStart: handleSelectStart,
+      onSqueezeEnd: handleSqueezeEnd,
+      onSqueezeStart: handleSqueezeStart,
+      onSyntheticAim: handleSyntheticControllerAim,
+      onThumbstick: handleSyntheticThumbstick,
+      xrControllers: {
+        left: xrController1,
+        right: xrController2
+      }
+    });
 
     function resize() {
       if (!mount || disposed) {
@@ -2110,17 +1876,8 @@ export function ThreeOfficialInteractiveLab({ initialSources, sessionId: propSes
     return () => {
       disposed = true;
       window.removeEventListener("resize", resize);
-      window.removeEventListener("three-official-controller-select", handleSyntheticControllerSelect as EventListener);
-      window.removeEventListener("three-official-controller-aim", handleSyntheticControllerAim as EventListener);
-      window.removeEventListener("three-official-controller-squeeze", handleSyntheticControllerSqueeze as EventListener);
-      window.removeEventListener("three-official-quick-menu", handleSyntheticQuickMenu as EventListener);
-      window.removeEventListener("three-official-menu-toggle", handleSyntheticMenuToggle as EventListener);
-      window.removeEventListener("three-official-record-toggle", handleSyntheticRecordToggle as EventListener);
-      window.removeEventListener("three-official-thumbstick", handleSyntheticThumbstick as EventListener);
-      renderer.domElement.removeEventListener("pointerdown", handleCanvasPointerDown);
-      renderer.domElement.removeEventListener("pointerup", handleCanvasPointerUp);
+      unbindControllerInput();
       renderer.setAnimationLoop(null);
-      controllerListeners.forEach((remove) => remove());
       group.disconnect();
       htmlMesh?.dispose?.();
       playerMesh?.dispose?.();

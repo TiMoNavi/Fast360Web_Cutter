@@ -16,12 +16,14 @@ def edge_envelope(event: FrameEffect, t_ms: int, default_edge_ms: int = 180) -> 
     start_ms = int(event["start_ms"])
     end_ms = int(event["end_ms"])
     duration_ms = max(end_ms - start_ms, 1)
-    edge_ms = int(params.get("edgeMs", min(default_edge_ms, duration_ms / 2)))
-    edge_ms = max(1, min(edge_ms, max(duration_ms // 2, 1)))
-    if t_ms < start_ms + edge_ms:
-        return clamp((t_ms - start_ms) / edge_ms, 0, 1)
-    if t_ms > end_ms - edge_ms:
-        return clamp((end_ms - t_ms) / edge_ms, 0, 1)
+    default_edge = int(params.get("edgeMs", min(default_edge_ms, duration_ms / 2)))
+    max_edge = max(duration_ms // 2, 1)
+    fade_in_ms = max(1, min(int(params.get("fadeInMs", default_edge)), max_edge))
+    fade_out_ms = max(1, min(int(params.get("fadeOutMs", default_edge)), max_edge))
+    if t_ms < start_ms + fade_in_ms:
+        return clamp((t_ms - start_ms) / fade_in_ms, 0, 1)
+    if t_ms > end_ms - fade_out_ms:
+        return clamp((end_ms - t_ms) / fade_out_ms, 0, 1)
     return 1
 
 
@@ -32,7 +34,9 @@ def apply_fade_black(frame: Any, t_ms: int, event: FrameEffect) -> Any:
     peak_opacity = clamp(float(params.get("peakOpacity", params.get("opacity", 1.0))), 0, 1)
     direction = str(params.get("direction", "through"))
     progress = effect_progress(event, t_ms)
-    if direction == "out":
+    if direction == "hold":
+        opacity = peak_opacity * edge_envelope(event, t_ms)
+    elif direction == "out":
         opacity = peak_opacity * progress
     elif direction == "in":
         opacity = peak_opacity * (1 - progress)
@@ -58,8 +62,16 @@ def apply_flash_white(frame: Any, t_ms: int, event: FrameEffect) -> Any:
 
     params = event.get("params") or {}
     peak_opacity = clamp(float(params.get("peakOpacity", params.get("opacity", 0.9))), 0, 1)
+    direction = str(params.get("direction", "through"))
     progress = effect_progress(event, t_ms)
-    opacity = peak_opacity * (1 - abs(progress * 2 - 1))
+    if direction == "hold":
+        opacity = peak_opacity * edge_envelope(event, t_ms)
+    elif direction == "out":
+        opacity = peak_opacity * progress
+    elif direction == "in":
+        opacity = peak_opacity * (1 - progress)
+    else:
+        opacity = peak_opacity * (1 - abs(progress * 2 - 1))
     color = parse_hex_color(str(params.get("color", "#ffffff")))
     overlay = np.empty_like(frame, dtype=np.float32)
     overlay[:, :] = color
@@ -97,7 +109,7 @@ def apply_highlight(frame: Any, t_ms: int, event: FrameEffect) -> Any:
 def apply_color_grade(frame: Any, t_ms: int, event: FrameEffect) -> Any:
     import numpy as np
 
-    params = event.get("params") or {}
+    params = resolve_color_grade_params(event.get("params") or {})
     strength = clamp(float(params.get("strength", 1.0)), 0, 1) * edge_envelope(event, t_ms)
     if strength <= 0:
         return frame
@@ -108,6 +120,9 @@ def apply_color_grade(frame: Any, t_ms: int, event: FrameEffect) -> Any:
     saturation = float(params.get("saturation", 1.08))
     warmth = float(params.get("warmth", 0))
     tint = float(params.get("tint", 0))
+    blue_bias = float(params.get("blueBias", params.get("blue_bias", 0)))
+    green_bias = float(params.get("greenBias", params.get("green_bias", 0)))
+    red_bias = float(params.get("redBias", params.get("red_bias", 0)))
 
     gray = working[:, :, 0] * 0.114 + working[:, :, 1] * 0.587 + working[:, :, 2] * 0.299
     graded = gray[:, :, None] + (working - gray[:, :, None]) * saturation
@@ -115,7 +130,73 @@ def apply_color_grade(frame: Any, t_ms: int, event: FrameEffect) -> Any:
     graded[:, :, 0] -= warmth * 24
     graded[:, :, 2] += warmth * 24
     graded[:, :, 1] += tint * 18
+    graded[:, :, 0] += blue_bias
+    graded[:, :, 1] += green_bias
+    graded[:, :, 2] += red_bias
     return np.clip(working * (1 - strength) + graded * strength, 0, 255).astype(np.uint8)
+
+
+def resolve_color_grade_params(params: dict[str, Any]) -> dict[str, Any]:
+    tint_value = params.get("tint")
+    if not isinstance(tint_value, str):
+        return params
+
+    presets: dict[str, dict[str, Any]] = {
+        "cyan": {
+            "blueBias": 8,
+            "contrast": 1.08,
+            "greenBias": 8,
+            "saturation": 1.16,
+            "tint": 0.32,
+            "warmth": -0.18,
+        },
+        "magenta": {
+            "blueBias": 10,
+            "contrast": 1.08,
+            "greenBias": -8,
+            "redBias": 14,
+            "saturation": 1.12,
+            "tint": -0.12,
+            "warmth": 0.06,
+        },
+        "sunset": {
+            "blueBias": -6,
+            "brightness": 2,
+            "contrast": 1.07,
+            "redBias": 8,
+            "saturation": 1.14,
+            "tint": 0.06,
+            "warmth": 0.42,
+        },
+        "chrome": {
+            "blueBias": 8,
+            "brightness": -2,
+            "contrast": 1.18,
+            "saturation": 0.82,
+            "tint": 0.04,
+            "warmth": -0.28,
+        },
+        "warm": {
+            "blueBias": -4,
+            "brightness": 1,
+            "contrast": 1.06,
+            "redBias": 5,
+            "saturation": 1.1,
+            "tint": 0.04,
+            "warmth": 0.28,
+        },
+        "mono": {
+            "brightness": -2,
+            "contrast": 1.14,
+            "saturation": 0.04,
+            "tint": 0,
+            "warmth": 0,
+        },
+    }
+    preset = presets.get(tint_value.lower())
+    if preset is None:
+        return {**params, "tint": 0}
+    return {**preset, **params, "tint": preset["tint"]}
 
 
 def apply_blur(frame: Any, t_ms: int, event: FrameEffect) -> Any:

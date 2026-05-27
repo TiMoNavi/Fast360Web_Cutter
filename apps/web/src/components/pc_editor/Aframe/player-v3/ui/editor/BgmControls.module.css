@@ -1,0 +1,164 @@
+.bgmControls {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 20;
+  width: min(420px, calc(100vw - 36px));
+  padding: 10px;
+  border: 1px solid rgba(0, 255, 255, 0.46);
+  border-top: 2px solid rgba(255, 0, 255, 0.72);
+  border-radius: 2px;
+  background:
+    linear-gradient(120deg, rgba(255, 255, 255, 0.1), transparent 32%, rgba(0, 255, 255, 0.06)),
+    rgba(8, 10, 12, 0.76);
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.46),
+    0 0 22px rgba(255, 0, 255, 0.16);
+  color: #edf4f6;
+  backdrop-filter: blur(16px) saturate(1.24);
+}
+
+.bgmHead,
+.bgmStrip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.bgmHead strong {
+  display: block;
+  overflow: hidden;
+  color: #ffffff;
+  font-family: Orbitron, system-ui, sans-serif;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 12px rgba(255, 0, 255, 0.42);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.bgmKicker {
+  color: #ff9900;
+  font-family: "Share Tech Mono", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 850;
+  text-shadow: 0 0 10px rgba(255, 153, 0, 0.48);
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.bgmControls button {
+  min-height: 34px;
+  border: 1px solid rgba(0, 255, 255, 0.46);
+  border-radius: 2px;
+  background: rgba(12, 2, 30, 0.72);
+  color: #e0e0e0;
+  cursor: pointer;
+  font: 800 11px/1 "Share Tech Mono", Consolas, monospace;
+  text-transform: uppercase;
+}
+
+.bgmControls button:hover,
+.bgmControls button.active {
+  color: #070011;
+  background: #00ffff;
+  border-color: #00ffff;
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.42);
+}
+
+.bgmStrip {
+  grid-template-columns: 48px minmax(0, 1fr);
+  margin-top: 8px;
+}
+
+.bgmProgress {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  gap: 8px;
+  align-items: center;
+  color: rgba(237, 244, 246, 0.72);
+  font-family: "Share Tech Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
+.bgmProgressTrack {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, #ff9900, #ff00ff, #00ffff) 0 / var(--bgm-progress) 100% no-repeat,
+    rgba(255, 255, 255, 0.16);
+  box-shadow: 0 0 18px rgba(255, 0, 255, 0.18);
+}
+
+.bgmMessage {
+  margin: 7px 0 0;
+  overflow: hidden;
+  color: rgba(237, 244, 246, 0.68);
+  font-family: "Share Tech Mono", Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgmPopover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: grid;
+  gap: 8px;
+  width: min(420px, calc(100vw - 36px));
+  max-height: min(320px, calc(100vh - 260px));
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(255, 0, 255, 0.5);
+  border-top: 2px solid rgba(0, 255, 255, 0.68);
+  border-radius: 2px;
+  background: rgba(9, 0, 20, 0.86);
+  box-shadow:
+    0 18px 54px rgba(0, 0, 0, 0.52),
+    0 0 24px rgba(255, 0, 255, 0.2);
+  backdrop-filter: blur(18px);
+}
+
+.bgmPopover button {
+  display: grid;
+  justify-items: start;
+  min-height: 44px;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.bgmPopover p {
+  margin: 0;
+  color: rgba(237, 244, 246, 0.7);
+  font-size: 12px;
+}
+
+.buttonLabel,
+.buttonKey {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.buttonKey {
+  color: rgba(237, 244, 246, 0.58);
+  font-family: Consolas, "Share Tech Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: none;
+}
+
+@media (max-width: 700px) {
+  .bgmControls {
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+}

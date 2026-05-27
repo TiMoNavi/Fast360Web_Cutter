@@ -10,6 +10,7 @@ type PcEditorDebugStateProps = {
   cameraLookRef: MutableRefObject<PcViewCenter>;
   cropMaskState: CropMaskState;
   edgePanActive: boolean;
+  effectSpeed: number;
   maskDragArmed: boolean;
   playbackState: AFrame360PlaybackState;
   recordingRate: number;
@@ -20,6 +21,7 @@ export function PcEditorDebugState({
   cameraLookRef,
   cropMaskState,
   edgePanActive,
+  effectSpeed,
   maskDragArmed,
   playbackState,
   recordingRate,
@@ -33,6 +35,7 @@ export function PcEditorDebugState({
           currentSourceKind: playbackState.currentSource?.kind ?? null,
           camera: cameraLookRef.current,
           edgePanActive,
+          effectSpeed,
           fov: playbackState.fov,
           lastCommand: playbackState.lastCommand,
           maskDragArmed,

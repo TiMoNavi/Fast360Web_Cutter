@@ -21,6 +21,7 @@ PlaybackClientState
 
 ```text
 创建和读取 cut session。
+维护 /xr/player active video/session 状态。
 保存 ClipEditConfig。
 接收 ViewPathPatch。
 校验用户、videoId、sessionId。
@@ -30,6 +31,27 @@ PlaybackClientState
 接收 PlaybackClientState。
 维护受影响 minute_segments 的 dirty 状态。
 ```
+
+## `/xr/player` session 状态
+
+后端应把 `/xr/player` 视为稳定产品入口的状态源，而不是要求前端路径携带 `videoId/sessionId`。
+
+建议职责：
+
+```text
+GET /api/xr/player-session：
+  返回当前用户的 active video/session、timeline revision、music/effect/export 摘要。
+  active 缺失时恢复最近可用 session。
+  首次使用且有可用 360 视频时自动创建 session。
+
+PUT /api/xr/player-session { videoId }：
+  用户在 /xr/player 切换视频时调用。
+  目标视频已有 session 时恢复该视频自己的 session。
+  没有 session 时创建新 session。
+  更新 active state。
+```
+
+不要通过一个 session 的 `video_id` 来承载不同视频之间的切换。视频切换应切换 active session，而不是把 path/effect/BGM/export 状态从一个视频迁移到另一个视频。
 
 ## WebXR 回传数据分层
 
@@ -48,13 +70,29 @@ PlaybackClientState：
 后端可以验收或用于恢复 UI，但默认不持久化，也不参与正式裁剪。
 ```
 
-后端渲染器的稳定输入边界是：
+WebXR bridge 向后端保存的稳定业务输入边界是：
 
 ```text
 ClipEditConfig + 展开后的 view_path_points + 可选 effect_events
 ```
 
 `PlaybackClientState` 即使上传成功，也不能改变最终导出结果。比如用户用 5x 快进跳过素材，正式时间轴仍以 `ViewPathPoint.tMs` 为准。
+
+理想状态下，WebXR bridge 只保存和校验这些输入，不直接决定最终渲染片段。后续应由 timeline assembler 把它们编译成 `ViewPathTimeline`：
+
+```text
+ViewPathPatch / EffectEventsPatch / SessionMusicConfig
+        ->
+timeline_assembler_service
+        ->
+ViewPathTimeline + TimelineBuildReport
+```
+
+Timeline 数据结构预期见：
+
+```text
+backend/timeline-data.md
+```
 
 ## 取景路径点
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from .rendering import run_frame_remap_equirect
 from .rendering.effects import events_for_segment
-from .rendering.path_pipeline import prepare_render_segment, render_point_from_row
+from .rendering.path_pipeline import prepare_render_segment, relative_segment_points, render_point_from_row
 from .storage import EXPORTS_DIR, TMP_DIR, connect, list_effect_events, new_id, utc_now
 
 SEGMENT_DURATION_MS = 30_000
@@ -119,8 +119,9 @@ def _render_segment_worker(
         work_dir = TMP_DIR / segment_id
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        effects = list_effect_events(connect().__enter__(), session_id, start_ms, end_ms)
-        segment_effects = events_for_segment(effects, segment)
+        with connect() as conn:
+            effects = list_effect_events(conn, session_id, start_ms, end_ms)
+        segment_effects = events_for_segment(effects, start_ms, end_ms)
 
         duration_ms = end_ms - start_ms
 
@@ -128,7 +129,7 @@ def _render_segment_worker(
             source_path=source_path,
             target_path=output_path,
             work_dir=work_dir,
-            points=segment,
+            points=relative_segment_points(segment),
             duration_ms=duration_ms,
             source_start_ms=start_ms,
             fps=RENDER_FPS,

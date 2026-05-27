@@ -9,10 +9,12 @@ type StyleWithVars = CSSProperties & Record<`--${string}`, string>;
 
 type PcPlayerControlsProps = {
   domPlaylistOpen: boolean;
+  effectSpeed: number;
   onCloseOverlays: () => void;
   onNext: () => void;
   onPrevious: () => void;
   onResetPlaybackRate: () => void;
+  onResetEffectSpeed: () => void;
   onResetRecordingRate: () => void;
   onSeekTo: (timeMs: number) => void;
   onSelectSource: (source: AFrame360VideoSource) => void;
@@ -39,10 +41,12 @@ function formatTime(ms: number) {
 
 export function PcPlayerControls({
   domPlaylistOpen,
+  effectSpeed,
   onCloseOverlays,
   onNext,
   onPrevious,
   onResetPlaybackRate,
+  onResetEffectSpeed,
   onResetRecordingRate,
   onSeekTo,
   onSelectSource,
@@ -128,7 +132,7 @@ export function PcPlayerControls({
             onClick={onResetPlaybackRate}
           >
             <span className="xr-button-label">Play {formatRate(playbackState.playbackRate)}x</span>
-            <span className="xr-button-key">Hold T + wheel</span>
+            <span className="xr-button-key">Hold Z + wheel</span>
           </button>
           <button
             className={rateWheelTarget === "recording" ? "player-ui-rate-button active" : "player-ui-rate-button"}
@@ -137,7 +141,16 @@ export function PcPlayerControls({
             onClick={onResetRecordingRate}
           >
             <span className="xr-button-label">Record {formatRate(recordingRate)}x</span>
-            <span className="xr-button-key">Hold R + wheel</span>
+            <span className="xr-button-key">Hold X + wheel</span>
+          </button>
+          <button
+            className={rateWheelTarget === "effect-speed" ? "player-ui-rate-button active" : "player-ui-rate-button"}
+            data-testid="xr-session-effect-speed"
+            type="button"
+            onClick={onResetEffectSpeed}
+          >
+            <span className="xr-button-label">FX {formatRate(effectSpeed)}x</span>
+            <span className="xr-button-key">Hold C + wheel</span>
           </button>
           <button className="player-ui-icon-button" type="button" onClick={onCloseOverlays} aria-label="Player options">
             <span className="xr-button-label">{"\u2699"}</span>

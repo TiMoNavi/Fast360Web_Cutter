@@ -18,10 +18,12 @@ from .models import (
     ClipEditConfig,
     EffectEventsPatch,
     PlaybackClientState,
+    RenderTestRequest,
     SessionMusicConfig,
     SessionStatus,
     ThumbnailRequest,
     ViewPathPatch,
+    WebXrPlayerSessionSwitch,
 )
 from .incremental_render import (
     SEGMENT_DURATION_MS,
@@ -39,6 +41,7 @@ from .rendering.path_pipeline import (
 from .storage import (
     EXPORTS_DIR,
     MUSIC_DIR,
+    ORIGINAL_VIDEOS_DIR,
     SAMPLE_VIDEOS_DIR,
     THUMBNAILS_DIR,
     TMP_DIR,
@@ -66,6 +69,13 @@ from .storage import (
     video_detail_response,
     video_response,
 )
+from .video_ingest import (
+    REJECTED_CAMERA_RAW_SUFFIXES,
+    SUPPORTED_VIDEO_SUFFIXES,
+    ingest_uploaded_video,
+    video_ingest_rule_for_suffix,
+)
+from .effects import effect_catalog_payload
 
 
 def read_int_env(name: str, default: int) -> int:
@@ -112,7 +122,7 @@ DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_UPLOAD_BYTES = read_int_env("VIDEO_UPLOAD_MAX_BYTES", DEFAULT_MAX_UPLOAD_BYTES)
 DEFAULT_MAX_MUSIC_UPLOAD_BYTES = 200 * 1024 * 1024
 MAX_MUSIC_UPLOAD_BYTES = read_int_env("MUSIC_UPLOAD_MAX_BYTES", DEFAULT_MAX_MUSIC_UPLOAD_BYTES)
-ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
+ALLOWED_VIDEO_SUFFIXES = SUPPORTED_VIDEO_SUFFIXES
 ALLOWED_VIDEO_CONTENT_TYPES = {"application/octet-stream"}
 ALLOWED_MUSIC_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 ALLOWED_MUSIC_CONTENT_TYPES = {"application/octet-stream"}
@@ -356,6 +366,11 @@ def me(user: dict[str, str] = Depends(require_user)) -> AuthUser:
     return AuthUser(id=user["id"], email=user["email"])
 
 
+@app.get("/api/effects/catalog")
+def effects_catalog(user: dict[str, str] = Depends(require_user)) -> dict:
+    return effect_catalog_payload()
+
+
 @app.post("/api/auth/logout")
 def logout(response: Response, tid_session: str | None = Cookie(default=None, alias=SESSION_COOKIE)) -> dict[str, str]:
     if tid_session:
@@ -447,6 +462,192 @@ def demo_video_id(user_id: str, sample_id: str) -> str:
 def demo_session_id(user_id: str, sample_id: str) -> str:
     digest = hashlib.sha1(f"session:{user_id}:{sample_id}".encode("utf-8")).hexdigest()[:14]
     return f"session_demo_{digest}_{sample_id.replace('-', '_')}"
+
+
+def is_likely_webxr_video(row: sqlite3.Row | dict) -> bool:
+    data = dict(row)
+    try:
+        metadata = json.loads(data.get("metadata_json") or "{}")
+    except json.JSONDecodeError:
+        metadata = {}
+
+    projection = str(metadata.get("projection") or "").lower()
+    layout = str(metadata.get("layout") or "").lower()
+
+    if projection and projection != "equirectangular":
+        return False
+    if layout and layout != "mono-2:1":
+        return False
+    if projection == "equirectangular" or layout == "mono-2:1":
+        return True
+
+    width = data.get("width")
+    height = data.get("height")
+    if width and height:
+        aspect = float(width) / float(height)
+        return 1.92 < aspect < 2.08
+
+    return True
+
+
+def list_webxr_video_rows(conn: sqlite3.Connection, user_id: str) -> list[sqlite3.Row]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM videos
+        WHERE user_id = ?
+        ORDER BY updated_at DESC, created_at DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [row for row in rows if is_likely_webxr_video(row)]
+
+
+def activate_webxr_player_session(
+    conn: sqlite3.Connection,
+    user_id: str,
+    video_id: str,
+    session_id: str,
+    now: str | None = None,
+) -> None:
+    timestamp = now or utc_now()
+    conn.execute(
+        "UPDATE cut_sessions SET updated_at = ? WHERE id = ? AND user_id = ?",
+        (timestamp, session_id, user_id),
+    )
+    conn.execute(
+        """
+        INSERT INTO webxr_player_state (user_id, active_video_id, active_session_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            active_video_id = excluded.active_video_id,
+            active_session_id = excluded.active_session_id,
+            updated_at = excluded.updated_at
+        """,
+        (user_id, video_id, session_id, timestamp, timestamp),
+    )
+
+
+def create_session_for_video(
+    conn: sqlite3.Connection,
+    user_id: str,
+    video_id: str,
+    now: str | None = None,
+) -> sqlite3.Row:
+    timestamp = now or utc_now()
+    session_id = new_id("session")
+    conn.execute(
+        """
+        INSERT INTO cut_sessions (id, video_id, user_id, status, timeline_revision, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (session_id, video_id, user_id, "collecting", 1, timestamp, timestamp),
+    )
+    save_clip_config(conn, ClipEditConfig(videoId=video_id, sessionId=session_id))
+    return conn.execute("SELECT * FROM cut_sessions WHERE id = ? AND user_id = ?", (session_id, user_id)).fetchone()
+
+
+def ensure_webxr_session_for_video(
+    conn: sqlite3.Connection,
+    user_id: str,
+    video_id: str,
+    now: str | None = None,
+) -> sqlite3.Row:
+    video = conn.execute(
+        "SELECT * FROM videos WHERE id = ? AND user_id = ?",
+        (video_id, user_id),
+    ).fetchone()
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if not is_likely_webxr_video(video):
+        raise HTTPException(status_code=400, detail="Video is not a WebXR 360 source")
+
+    session = conn.execute(
+        """
+        SELECT *
+        FROM cut_sessions
+        WHERE video_id = ? AND user_id = ? AND status != ?
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1
+        """,
+        (video_id, user_id, "abandoned"),
+    ).fetchone()
+    if session is None:
+        session = create_session_for_video(conn, user_id, video_id, now)
+
+    activate_webxr_player_session(conn, user_id, session["video_id"], session["id"], now)
+    return conn.execute("SELECT * FROM cut_sessions WHERE id = ? AND user_id = ?", (session["id"], user_id)).fetchone()
+
+
+def webxr_player_session_payload(conn: sqlite3.Connection, session: sqlite3.Row, source: str) -> dict:
+    latest_export = conn.execute(
+        """
+        SELECT id, session_id, status, file_path, error_message, created_at, updated_at
+        FROM exports
+        WHERE session_id = ? AND user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (session["id"], session["user_id"]),
+    ).fetchone()
+    return {
+        "sessionId": session["id"],
+        "videoId": session["video_id"],
+        "status": session["status"],
+        "timelineRevision": session["timeline_revision"],
+        "source": source,
+        "xrPath": "/xr/player",
+        "latestExport": export_response(latest_export) if latest_export else None,
+        "music": session_music_response(get_session_music(conn, session["id"])),
+    }
+
+
+def resolve_active_webxr_player_session(conn: sqlite3.Connection, user_id: str) -> tuple[sqlite3.Row, str]:
+    state = conn.execute(
+        """
+        SELECT active_session_id
+        FROM webxr_player_state
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+
+    if state and state["active_session_id"]:
+        session = conn.execute(
+            """
+            SELECT *
+            FROM cut_sessions
+            WHERE id = ? AND user_id = ? AND status != ?
+            """,
+            (state["active_session_id"], user_id, "abandoned"),
+        ).fetchone()
+        if session is not None:
+            video = conn.execute("SELECT * FROM videos WHERE id = ? AND user_id = ?", (session["video_id"], user_id)).fetchone()
+            if video is not None and is_likely_webxr_video(video):
+                return session, "active"
+
+    sessions = conn.execute(
+        """
+        SELECT *
+        FROM cut_sessions
+        WHERE user_id = ? AND status != ?
+        ORDER BY updated_at DESC, created_at DESC
+        """,
+        (user_id, "abandoned"),
+    ).fetchall()
+    for session in sessions:
+        video = conn.execute("SELECT * FROM videos WHERE id = ? AND user_id = ?", (session["video_id"], user_id)).fetchone()
+        if video is not None and is_likely_webxr_video(video):
+            activate_webxr_player_session(conn, user_id, session["video_id"], session["id"])
+            return conn.execute("SELECT * FROM cut_sessions WHERE id = ? AND user_id = ?", (session["id"], user_id)).fetchone(), "latest-session"
+
+    videos = list_webxr_video_rows(conn, user_id)
+    if not videos:
+        raise HTTPException(status_code=404, detail="No WebXR video sources available")
+
+    session = create_session_for_video(conn, user_id, videos[0]["id"])
+    activate_webxr_player_session(conn, user_id, session["video_id"], session["id"])
+    return conn.execute("SELECT * FROM cut_sessions WHERE id = ? AND user_id = ?", (session["id"], user_id)).fetchone(), "created"
 
 
 @app.get("/api/demo-videos")
@@ -586,6 +787,8 @@ def start_demo_video(sample_id: str, user: dict[str, str] = Depends(require_user
         else:
             session_id = session["id"]
 
+        activate_webxr_player_session(conn, user["id"], video_id, session_id, now)
+
     return {
         "sampleId": sample_id,
         "videoId": video_id,
@@ -612,10 +815,33 @@ def list_videos(user: dict[str, str] = Depends(require_user)) -> dict[str, list[
     return {"videos": videos}
 
 
+@app.get("/api/xr/player-session")
+def get_webxr_player_session(user: dict[str, str] = Depends(require_user)) -> dict:
+    with connect() as conn:
+        session, source = resolve_active_webxr_player_session(conn, user["id"])
+        return webxr_player_session_payload(conn, session, source)
+
+
+@app.put("/api/xr/player-session")
+def switch_webxr_player_session(
+    payload: WebXrPlayerSessionSwitch,
+    user: dict[str, str] = Depends(require_user),
+) -> dict:
+    with connect() as conn:
+        session = ensure_webxr_session_for_video(conn, user["id"], payload.video_id)
+        return webxr_player_session_payload(conn, session, "switched")
+
+
 def validate_upload_metadata(original_name: str, content_type: str | None) -> str:
     suffix = Path(original_name).suffix.lower()
     if suffix not in ALLOWED_VIDEO_SUFFIXES:
         raise HTTPException(status_code=400, detail="Unsupported video file extension")
+    if suffix in REJECTED_CAMERA_RAW_SUFFIXES:
+        rule = video_ingest_rule_for_suffix(suffix)
+        raise HTTPException(
+            status_code=400,
+            detail=rule.note if rule else "Camera raw format is not supported yet",
+        )
 
     normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
     if normalized_content_type and not (
@@ -658,15 +884,27 @@ async def upload_video(
 ) -> dict[str, str | int | float | None | dict]:
     video_id = new_id("video")
     original_name = Path(file.filename or "upload.bin").name
-    target: Path | None = None
+    upload_path: Path | None = None
+    stored_path: Path | None = None
+    original_path: Path | None = None
 
     try:
         suffix = validate_upload_metadata(original_name, file.content_type)
-        stored_filename = f"{video_id}{suffix}"
-        target = VIDEOS_DIR / stored_filename
-        file_size = copy_upload_with_limit(file, target)
-        metadata = probe_video_metadata(target)
-        thumbnail_filename = generate_video_thumbnail(target, video_id, metadata.get("durationMs"))
+        upload_path = VIDEOS_DIR / f"{video_id}.upload{suffix}"
+        copy_upload_with_limit(file, upload_path)
+        ingest = ingest_uploaded_video(
+            video_id=video_id,
+            upload_path=upload_path,
+            original_name=original_name,
+            content_type=file.content_type,
+            videos_dir=VIDEOS_DIR,
+            originals_dir=ORIGINAL_VIDEOS_DIR,
+        )
+        stored_path = VIDEOS_DIR / ingest.stored_filename
+        if ingest.original_stored_filename:
+            original_path = VIDEOS_DIR / ingest.original_stored_filename
+        metadata = ingest.metadata
+        thumbnail_filename = generate_video_thumbnail(stored_path, video_id, metadata.get("durationMs"))
         now = utc_now()
         with connect() as conn:
             conn.execute(
@@ -681,25 +919,31 @@ async def upload_video(
                     video_id,
                     user["id"],
                     original_name,
-                    stored_filename,
-                    file.content_type,
-                    file_size,
+                    ingest.stored_filename,
+                    ingest.content_type,
+                    ingest.file_size,
                     metadata["durationMs"],
                     metadata["width"],
                     metadata["height"],
                     metadata["fps"],
                     json.dumps(metadata),
                     thumbnail_filename,
-                    "ready_for_xr",
+                    ingest.status,
                     now,
                     now,
                 ),
             )
             row = conn.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
         return video_response(row)
-    except Exception:
-        if target is not None:
-            target.unlink(missing_ok=True)
+    except Exception as exc:
+        if upload_path is not None:
+            upload_path.unlink(missing_ok=True)
+        if stored_path is not None:
+            stored_path.unlink(missing_ok=True)
+        if original_path is not None:
+            original_path.unlink(missing_ok=True)
+        if isinstance(exc, RuntimeError):
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         raise
     finally:
         await file.close()
@@ -913,6 +1157,7 @@ def create_cut_session(config: ClipEditConfig, user: dict[str, str] = Depends(re
             (config.session_id, config.video_id, user["id"], "collecting", config.timeline_revision, now, now),
         )
         save_clip_config(conn, config)
+        activate_webxr_player_session(conn, user["id"], config.video_id, config.session_id, now)
     return {"sessionId": config.session_id, "videoId": config.video_id, "status": "collecting"}
 
 
@@ -963,6 +1208,7 @@ def update_cut_session_config(
             (config.video_id, config.timeline_revision, now, session_id),
         )
         save_clip_config(conn, config)
+        activate_webxr_player_session(conn, user["id"], config.video_id, session_id, now)
     return {
         "sessionId": session_id,
         "videoId": config.video_id,
@@ -1152,6 +1398,10 @@ def abandon_cut_session(session_id: str, user: dict[str, str] = Depends(require_
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Cut session not found")
+        conn.execute(
+            "DELETE FROM webxr_player_state WHERE user_id = ? AND active_session_id = ?",
+            (user["id"], session_id),
+        )
     return {"sessionId": session_id, "status": "abandoned"}
 
 
@@ -1242,7 +1492,11 @@ def get_segment_renders(session_id: str, user: dict[str, str] = Depends(require_
 
 
 @app.post("/api/cut-sessions/{session_id}/render-test")
-def render_test(session_id: str, user: dict[str, str] = Depends(require_user)) -> dict[str, str | bool | int | None]:
+def render_test(
+    session_id: str,
+    payload: RenderTestRequest | None = None,
+    user: dict[str, str] = Depends(require_user),
+) -> dict[str, str | bool | int | None]:
     export_id = new_id("export")
     now = utc_now()
     with connect() as conn:
@@ -1291,62 +1545,57 @@ def render_test(session_id: str, user: dict[str, str] = Depends(require_user)) -
     all_points = [render_point_from_row(point) for point in points]
     max_path_ms = int(all_points[-1]["t_ms"])
     video_duration_ms = int(session["duration_ms"] or 0)
-    smoke_duration_ms = min(max_path_ms, video_duration_ms or max_path_ms, RENDER_TEST_MAX_DURATION_MS)
+    loop_source = bool(payload.loop_source) if payload is not None else False
+    if loop_source:
+        smoke_duration_ms = min(max_path_ms, RENDER_TEST_MAX_DURATION_MS)
+    else:
+        smoke_duration_ms = min(max_path_ms, video_duration_ms or max_path_ms, RENDER_TEST_MAX_DURATION_MS)
+    rendered_duration_ms = 0
 
     try:
         if smoke_duration_ms <= 0:
             raise RuntimeError("Invalid smoke render duration")
 
-        num_segments = (smoke_duration_ms + SEGMENT_DURATION_MS - 1) // SEGMENT_DURATION_MS
+        capped_points = [point for point in all_points if float(point["t_ms"]) <= smoke_duration_ms]
+        if not capped_points:
+            capped_points = [{**all_points[0], "t_ms": 0.0}]
+        if float(capped_points[0]["t_ms"]) > 0:
+            capped_points.insert(0, {**capped_points[0], "t_ms": 0.0})
+        if float(capped_points[-1]["t_ms"]) < smoke_duration_ms:
+            capped_points.append({**capped_points[-1], "t_ms": float(smoke_duration_ms)})
+
+        render_segments = build_enabled_render_segments(capped_points)
         segment_paths: list[Path] = []
 
-        with connect() as conn:
-            completed_segments = {
-                row["segment_index"]: row["file_path"]
-                for row in conn.execute(
-                    "SELECT segment_index, file_path FROM segment_renders WHERE session_id = ? AND status = 'completed'",
-                    (session_id,)
-                ).fetchall()
-            }
+        for seg_idx, render_segment in enumerate(render_segments):
+            start_ms = int(float(render_segment[0]["t_ms"]))
+            end_ms = int(float(render_segment[-1]["t_ms"]))
+            duration_ms = end_ms - start_ms
+            if duration_ms <= 0:
+                continue
 
-        for seg_idx in range(num_segments):
-            start_ms = seg_idx * SEGMENT_DURATION_MS
-            end_ms = min((seg_idx + 1) * SEGMENT_DURATION_MS, smoke_duration_ms)
+            segment = prepare_render_segment(
+                render_segment,
+                fps=RENDER_TEST_FPS,
+                max_yaw_rate=RENDER_TEST_MAX_YAW_RATE_DEGREES_PER_SECOND,
+                max_pitch_rate=RENDER_TEST_MAX_PITCH_RATE_DEGREES_PER_SECOND,
+                max_fov_rate=RENDER_TEST_MAX_FOV_RATE_DEGREES_PER_SECOND,
+            )
 
-            if seg_idx in completed_segments and Path(completed_segments[seg_idx]).exists():
-                segment_paths.append(Path(completed_segments[seg_idx]))
-            else:
-                segment_points = [p for p in all_points if start_ms <= p["t_ms"] <= end_ms]
-                if not segment_points:
-                    continue
-
-                if segment_points[0]["t_ms"] > start_ms:
-                    first = {**segment_points[0], "t_ms": float(start_ms)}
-                    segment_points.insert(0, first)
-                if segment_points[-1]["t_ms"] < end_ms:
-                    last = {**segment_points[-1], "t_ms": float(end_ms)}
-                    segment_points.append(last)
-
-                segment = prepare_render_segment(
-                    segment_points,
-                    fps=RENDER_TEST_FPS,
-                    max_yaw_rate=RENDER_TEST_MAX_YAW_RATE_DEGREES_PER_SECOND,
-                    max_pitch_rate=RENDER_TEST_MAX_PITCH_RATE_DEGREES_PER_SECOND,
-                    max_fov_rate=RENDER_TEST_MAX_FOV_RATE_DEGREES_PER_SECOND,
-                )
-
-                segment_path = work_dir / f"segment-{seg_idx:03d}.mp4"
-                run_frame_remap_equirect(
-                    source_path,
-                    segment_path,
-                    work_dir / f"segment-{seg_idx:03d}",
-                    relative_segment_points(segment),
-                    end_ms - start_ms,
-                    source_start_ms=start_ms,
-                    fps=RENDER_TEST_FPS,
-                    effect_events=events_for_segment(effects, start_ms, end_ms),
-                )
-                segment_paths.append(segment_path)
+            segment_path = work_dir / f"segment-{seg_idx:03d}.mp4"
+            run_frame_remap_equirect(
+                source_path,
+                segment_path,
+                work_dir / f"segment-{seg_idx:03d}",
+                relative_segment_points(segment),
+                duration_ms,
+                source_start_ms=start_ms % video_duration_ms if loop_source and video_duration_ms > 0 else start_ms,
+                fps=RENDER_TEST_FPS,
+                effect_events=events_for_segment(effects, start_ms, end_ms),
+                loop_source=loop_source and video_duration_ms > 0,
+            )
+            segment_paths.append(segment_path)
+            rendered_duration_ms += duration_ms
 
         if not segment_paths:
             raise RuntimeError("No segments to render")
@@ -1355,7 +1604,6 @@ def render_test(session_id: str, user: dict[str, str] = Depends(require_user)) -
         else:
             concat_segments_reencode(segment_paths, work_dir / "segments.txt", output_path, fps=RENDER_TEST_FPS)
 
-        rendered_duration_ms = smoke_duration_ms
         if (
             music_config is not None
             and bool(music_config["enabled"])
@@ -1415,6 +1663,7 @@ def render_test(session_id: str, user: dict[str, str] = Depends(require_user)) -
         "status": "ready",
         "downloadReady": True,
         "durationMs": rendered_duration_ms,
+        "loopSource": loop_source,
     }
 
 

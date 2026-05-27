@@ -16,6 +16,7 @@ from .models import ClipEditConfig, EffectEvent, EffectEventsPatch, ViewPathPatc
 ROOT_DIR = Path(__file__).resolve().parents[3]
 STORAGE_DIR = ROOT_DIR / "storage"
 VIDEOS_DIR = STORAGE_DIR / "videos"
+ORIGINAL_VIDEOS_DIR = VIDEOS_DIR / "originals"
 MUSIC_DIR = STORAGE_DIR / "music"
 EXPORTS_DIR = STORAGE_DIR / "exports"
 TMP_DIR = STORAGE_DIR / "tmp"
@@ -48,6 +49,7 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_storage() -> None:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+    ORIGINAL_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
     MUSIC_DIR.mkdir(parents=True, exist_ok=True)
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -125,6 +127,17 @@ def init_storage() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(video_id) REFERENCES videos(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS webxr_player_state (
+                user_id TEXT PRIMARY KEY,
+                active_video_id TEXT,
+                active_session_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(active_video_id) REFERENCES videos(id),
+                FOREIGN KEY(active_session_id) REFERENCES cut_sessions(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS clip_edit_configs (
@@ -298,7 +311,7 @@ def probe_video_metadata(path: Path) -> dict[str, Any]:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width,height,r_frame_rate:format=duration",
+        "stream=codec_name,width,height,r_frame_rate,pix_fmt:format=duration,format_name",
         "-of",
         "json",
         str(path),
@@ -317,6 +330,9 @@ def probe_video_metadata(path: Path) -> dict[str, Any]:
         "width": stream.get("width"),
         "height": stream.get("height"),
         "fps": fps,
+        "videoCodec": stream.get("codec_name"),
+        "pixelFormat": stream.get("pix_fmt"),
+        "container": (raw.get("format") or {}).get("format_name"),
         "source": "ffprobe",
     }
 

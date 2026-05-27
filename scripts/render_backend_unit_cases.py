@@ -91,6 +91,10 @@ CASES: dict[str, list[dict[str, float | bool | str]]] = {
         point(3000, 0, 0),
         point(DURATION_MS, 20, 0),
     ],
+    "08_little_planet_projection_event": [
+        point(0, 0, 0),
+        point(DURATION_MS, 0, 0),
+    ],
 }
 
 
@@ -108,6 +112,20 @@ EFFECT_CASES: dict[str, list[dict[str, object]]] = {
             "start_ms": 3200,
             "end_ms": 5200,
             "params": {"strength": 0.35, "warmth": 0.18, "bloom": 0.22},
+            "enabled": True,
+        },
+    ],
+    "08_little_planet_projection_event": [
+        {
+            "event_name": "frame.little_planet_pullback",
+            "start_ms": 0,
+            "end_ms": 1600,
+            "params": {
+                "peakAtMs": 560,
+                "peakPitch": -88,
+                "peakSphereFov": 175,
+            },
+            "render_policy": {"fallback": "fail"},
             "enabled": True,
         },
     ],

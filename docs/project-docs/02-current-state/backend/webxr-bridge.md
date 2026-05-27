@@ -11,6 +11,9 @@ POST /api/cut-sessions/:sessionId/effect-events
 POST /api/cut-sessions/:sessionId/playback-state
 POST /api/cut-sessions/:sessionId/abandon
 GET  /api/cut-sessions/:sessionId/status
+GET  /api/cut-sessions/:sessionId/segment-renders
+GET  /api/xr/player-session
+PUT  /api/xr/player-session
 ```
 
 ## 已实现能力
@@ -25,11 +28,36 @@ GET  /api/cut-sessions/:sessionId/status
 按 [replaceRange.startMs, replaceRange.endMs) 删除旧 view_path_points。
 写入当前 points。
 把受影响 minute_segments 标记 dirty。
+path patch 接收后会尝试推动实验性 segment_renders，但这还不是生产级任务队列。
 接收 EffectEventsPatch。
 保存效果事件时间线。
 PlaybackClientState 只验收不持久化。
 abandon 会把 session 状态改为 abandoned。
+维护 webxr_player_state，供 /xr/player 恢复和切换 active video/session。
+视频切换时按目标视频恢复最近未 abandoned session；没有则新建 session。
 ```
+
+## `/xr/player` active session 当前状态
+
+当前后端新增了 `webxr_player_state`：
+
+```text
+user_id
+active_video_id
+active_session_id
+created_at
+updated_at
+```
+
+`GET /api/xr/player-session` 会按以下顺序解析当前 session：
+
+```text
+1. 优先使用 webxr_player_state.active_session_id。
+2. active 缺失、视频不存在或 session 已 abandoned 时，回退到当前用户最近更新的可用 WebXR session。
+3. 仍没有 session 时，从可用 360 视频里选择一个并创建 cut session。
+```
+
+`PUT /api/xr/player-session { videoId }` 用于 `/xr/player` 视频列表切换。它不会把旧 session 改成新视频，而是为目标视频恢复/创建独立 session，然后更新 active state。
 
 ## 当前协议命名
 
@@ -79,9 +107,9 @@ overlay.letterbox
 overlay.text
 ```
 
-这已经具备“独立事件时间线”的基础，但还没有完全满足用户自定义名称事件列表。后续需要把自定义名称或标签作为协议字段纳入 EffectEvent，或在 params 中先保存。
+这已经具备“独立事件时间线”的基础。当前代码也已经支持自由事件名：`EffectEvent` 可以用 `eventName` 或 `type` 输入机器可读名称，并可携带 `displayName`、`params` 和 `renderPolicy`。
 
-目标协议应支持自由事件名，例如：
+事件名建议使用命名空间，例如：
 
 ```text
 black.solid
@@ -111,9 +139,13 @@ apps/api/app/timeline_assembler.py
 它可以把线性 `ViewPathPoint` 字典和效果事件字典编译成 `ViewPathTimeline` 字典，包含：
 
 ```text
+schema / timelineId / createdAt
+source / session / output / coordinateSystem
+effectSystem
 editSegments
 viewTracks
 effectTracks
+audioTracks
 coverage.gaps
 build.warnings
 ```
@@ -124,8 +156,11 @@ build.warnings
 支持 enabled=false 跳过区间。
 支持按 source 时间生成 forward / speed=1.0 的 editSegments。
 支持把 effect events 透传成 effectTracks。
+支持把 music 风格配置转成 audioTracks。
+支持把当前 effect registry 快照写入 effectSystem。
 支持检测点间缺口并标记 ready / partial / not_ready。
 尚未接 HTTP 导出接口。
+尚未持久化 ViewPathTimeline snapshot。
 尚未支持快进、慢放、倒放等时间变速意图的编译。
 尚未把 assembler 接入 render-test。
 ```
@@ -175,6 +210,12 @@ save_clip_config、save_patch、save_effect_events_patch、mark_minutes、list_e
 
 apps/api/app/models.py
 ClipEditConfig、ViewPathPatch、ViewPathPoint、EffectEventsPatch、EffectEvent、PlaybackClientState、SessionStatus。
+
+apps/api/app/timeline_assembler.py
+assemble_view_path_timeline、normalize_points、edit_segments_from_render_segments、timeline_effect_event、timeline_audio_track。
+
+apps/api/app/incremental_render.py
+trigger_segment_render、cancel_segment_render 和实验性 30 秒 segment worker。
 ```
 
 ## 当前缺口
@@ -185,6 +226,7 @@ ViewPathPatch 还没有完整校验 replaceRange.startMs < replaceRange.endMs。
 还没有校验 points 全部落在 replaceRange 内。
 pathRevision 冲突策略未定义。
 PlaybackClientState 不持久化。
-自定义名称的特效事件还没有正式协议字段。
-dirty 只标记，不触发队列。
+dirty 标记还没有接到稳定生产队列。
+ViewPathTimeline 还没有持久化，也没有接入 render-test 主路径。
+segment_renders 是实验性线程，不是生产队列。
 ```

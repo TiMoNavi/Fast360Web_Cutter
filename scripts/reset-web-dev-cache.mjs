@@ -2,7 +2,7 @@ import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
-const ports = [3000, 3001];
+const ports = [3000, 3001, 3080];
 const targets = [
   "apps/web/.next",
   "apps/web/tsconfig.tsbuildinfo",

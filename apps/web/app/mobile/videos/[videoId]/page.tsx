@@ -7,6 +7,7 @@ import { QuestQrCode } from "@/components/mobile/QuestQrCode";
 import { SessionActions } from "@/components/mobile/SessionActions";
 import { StatusBadge } from "@/components/mobile/StatusBadge";
 import { Video360Preview } from "@/components/mobile/Video360Preview";
+import { XrPlayerEntryButton } from "@/components/XrSessionLink";
 import {
   formatBytes,
   formatDate,
@@ -189,9 +190,11 @@ export default async function MobileVideoDetailPage({ params }: PageProps) {
                     <div className="vapor-link-box">{xrUrl}</div>
                     <div className="vapor-card-actions">
                       <CopyLinkButton value={xrUrl} />
-                      <Link className="vapor-button vapor-button-primary" href={xrPath}>
-                        <span>打开 WebXR</span>
-                      </Link>
+                      <XrPlayerEntryButton
+                        buttonClassName="vapor-button vapor-button-primary"
+                        label="打开 WebXR"
+                        videoId={video.id}
+                      />
                     </div>
                   </div>
                 </div>

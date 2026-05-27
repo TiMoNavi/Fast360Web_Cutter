@@ -2,13 +2,15 @@
 
 ## 定位
 
-Meta Quest 3 空间剪辑器是 PC WebXR Editor 的头显端形态，对应同一个业务页面：
+Meta Quest 3 空间剪辑器是 PC WebXR Editor 的头显端形态，后期对应同一个稳定业务页面：
 
 ```text
-/xr/videos/:videoId/session/:sessionId
+/xr/player
 ```
 
 它不复制 PC 的键鼠面板，而是把现有语义动作迁移到头显内的空间 UI。核心目标是让用户在观看 360 视频时直接完成裁剪：大部分操作应在 1 到 2 次点击内完成，高频动作优先使用“按住展开或绑定，移动到目标，松开发生效”的模式。
+
+当前 `/xr/videos/:videoId/session/:sessionId` 仍可作为过渡期兼容深链；后期 Quest Browser 应打开 `/xr/player`，由数据层或后端 active session 提供当前素材和 session。
 
 第一版以 Meta Quest controller 为主要输入。手势输入可以作为同语义动作的后续增强，但不作为首轮验收基线。
 
@@ -886,7 +888,7 @@ controller ray 命中反馈。
 第一版 Quest 3 空间剪辑器验收：
 
 ```text
-Quest Browser 可以进入 /xr/videos/:videoId/session/:sessionId。
+Quest Browser 可以进入 /xr/player，并恢复或创建当前 active WebXR session。
 A-Frame scene、videosphere、XR session 和 controller 输入正常工作。
 视频可以播放、暂停、seek、切换视频。
 进入 immersive-vr 后，不依赖 DOM/CSS UI 完成核心裁剪操作。

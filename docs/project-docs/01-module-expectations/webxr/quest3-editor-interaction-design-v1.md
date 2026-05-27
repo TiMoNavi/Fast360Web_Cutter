@@ -1010,8 +1010,9 @@ PC 里有多组“滚轮 + modifier”：
 
 ```text
 H + wheel -> mask opacity
-T + wheel -> playback rate
-R + wheel -> recording rate
+Z + wheel -> playback rate
+X + wheel -> recording rate
+C + wheel -> effect speed
 wheel -> camera FOV
 ```
 

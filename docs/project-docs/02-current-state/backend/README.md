@@ -15,6 +15,9 @@ video-library.md
 webxr-bridge.md
 WebXR 桥接模块当前状态。
 
+timeline-data.md
+Timeline 数据结构当前状态，说明当前代码如何保存 patch、展开点、生成 ViewPathTimeline 字典，以及还缺哪些持久化和编译环节。
+
 video-cutting.md
 视频裁切模块当前状态。
 

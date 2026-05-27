@@ -6,13 +6,19 @@
 
 ```text
 apps/api/app/main.py
-当前承载大部分 FastAPI 路由、认证、上传、session、patch、render-test 和 export 接口。
+当前承载大部分 FastAPI 路由、认证、上传、session、/xr/player active session、patch、render-test 和 export 接口。
 
 apps/api/app/storage.py
-当前承载 SQLite 初始化、文件路径、响应组装、patch 写入和部分导出 helper。
+当前承载 SQLite 初始化、webxr_player_state、文件路径、响应组装、patch 写入和部分导出 helper。
 
 apps/api/app/models.py
 当前承载 Pydantic 协议模型。
+
+apps/api/app/timeline_assembler.py
+当前承载 ViewPathTimeline 字典生成逻辑，但还没有接入 HTTP、持久化或 render-test。
+
+apps/api/app/incremental_render.py
+当前承载实验性的进程内 30 秒 segment render 线程，不是生产任务队列。
 
 apps/api/app/rendering/
 当前承载后端渲染器相关逻辑，包括逐帧 remap、路径预处理和效果应用。
@@ -33,6 +39,9 @@ backend/video-library.md
 backend/webxr-bridge.md
 WebXR 桥接模块当前状态。
 
+backend/timeline-data.md
+Timeline 数据结构当前状态。
+
 backend/video-cutting.md
 视频裁切模块当前状态。
 
@@ -50,5 +59,5 @@ MVP 闭环已经可用。
 认证、上传、视频库、WebXR 桥接、裁切导出仍主要集中在 main.py / storage.py，需要继续解耦。
 
 生产能力上：
-render-test 仍是同步开发接口，不是生产级分片队列。
+render-test 仍是同步开发接口；segment_renders 已有实验线程，但不是生产级分片队列。
 ```

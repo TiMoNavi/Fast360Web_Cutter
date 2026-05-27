@@ -2,6 +2,8 @@
 
 日期：2026-05-23
 
+> 维护说明：本文是 2026-05-23 的缺口快照，不再作为最新 WebXR current state。2026-05-25 之后 `/xr/player` 已接入指针点选/拖拽、discard hold、effect event、BGM、start/end/render workflow 等能力；最新事实以 `webxr.md` 为准。
+
 ## 结论
 
 Quest 3 的交互设计给 PC editor 最大的启发是：PC 不应该只做“键盘微调取景框 + 导出”的页面，而应该成为同一套剪辑语义的桌面工作台。后端已经能接收的能力包括取景路径、FOV、cut/enable、效果事件、播放状态、BGM 选择和 render-test；PC editor 目前只把其中一小部分做成了可用交互。

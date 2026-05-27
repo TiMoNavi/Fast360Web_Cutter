@@ -2,7 +2,9 @@
 
 日期：2026-05-24
 
-本文记录当前产品级 PC editor 页面 `/xr/videos/:videoId/session/:sessionId` 的交互、UI 组件位置、操作层边界和自动化测试覆盖。目标是给后续 VR 端迁移使用：VR 端应该尽量复用同一套 semantic operation，只替换输入适配器和空间 UI。
+本文记录当前产品级 PC editor 页面 `/xr/player` 的交互、UI 组件位置、操作层边界和自动化测试覆盖。目标是给后续 VR 端迁移使用：VR 端应该尽量复用同一套 semantic operation，只替换输入适配器和空间 UI。
+
+`/xr/videos/:videoId/session/:sessionId` 当前仍作为兼容深链和部分自动化测试入口存在，但后期不再作为产品路由主线。
 
 ## 页面范围
 
@@ -15,6 +17,7 @@ apps/web/src/features/webxr/pc-editor/
 业务路由入口：
 
 ```text
+apps/web/app/xr/player/page.tsx
 apps/web/app/xr/videos/[videoId]/session/[sessionId]/page.tsx
 ```
 

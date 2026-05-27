@@ -2,6 +2,7 @@
 
 import type { ThreeOfficialCropWorkflowStatus } from "./format";
 import { cropWorkflowLabel } from "./format";
+import { MAX_FOV_H, MIN_FOV_H } from "./constants";
 
 type ThreeOfficialWorkbenchPanelProps = {
   cropWorkflowStatus: ThreeOfficialCropWorkflowStatus;
@@ -78,7 +79,7 @@ export function ThreeOfficialWorkbenchPanel({
           </div>
           <label className="three-official-slider">
             <span>FOV {fov}</span>
-            <input aria-label="FOV readout" disabled max="112" min="48" type="range" value={fov} />
+            <input aria-label="FOV readout" disabled max={MAX_FOV_H} min={MIN_FOV_H} type="range" value={fov} />
           </label>
           <label className="three-official-slider">
             <span>MASK {maskOpacity.toFixed(2)}</span>

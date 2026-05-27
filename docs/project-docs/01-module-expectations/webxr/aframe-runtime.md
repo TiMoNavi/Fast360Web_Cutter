@@ -2,13 +2,15 @@
 
 ## 场景结构
 
-A-Frame 运行时以 `a-scene` 为 WebXR 根。长期业务入口仍是：
+A-Frame 运行时以 `a-scene` 为 WebXR 根。长期业务入口应收敛为：
 
 ```text
-/xr/videos/:videoId/session/:sessionId
+/xr/player
 ```
 
-页面从后端读取 `videoId`、`sessionId`、`sourceUrl` 和已有 session 状态，然后把这些数据交给 A-Frame 场景中的播放器、UI 和采样模块。
+页面从后端或 player data layer 读取 active `videoId`、`sessionId`、`sourceUrl` 和已有 session 状态，然后把这些数据交给 A-Frame 场景中的播放器、UI 和采样模块。
+
+当前 `/xr/videos/:videoId/session/:sessionId` 仍可作为过渡期深链，但不应作为长期业务入口继续扩张。
 
 建议的概念结构：
 

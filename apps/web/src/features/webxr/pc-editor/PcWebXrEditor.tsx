@@ -14,9 +14,9 @@ import { useAFrameRuntime } from "./webxr/useAFrameRuntime";
 import { AFrame360VideoControlBridge } from "./controls/AFrame360VideoControlBridge";
 import { use360VideoPlaybackController } from "./controls/use360VideoPlaybackController";
 import { usePcEditorControls } from "./controls/usePcEditorControls";
-import type { AFrame360VideoSource } from "./controls/types";
+import type { AFrame360VideoCommand, AFrame360VideoCommandPayload, AFrame360VideoSource } from "./controls/types";
 import type { AFrameEntityLike, Vector3Like, ViewTargetPose } from "./data/timeline-bridge/types";
-import { apiUrl, renderTest, updateCutSessionVideo } from "@/lib/api";
+import { apiUrl, renderTest, switchWebXrPlayerSession, updateCutSessionVideo } from "@/lib/api";
 import { AFrameEditorScene } from "./webxr/AFrameEditorScene";
 import { PcBgmControls } from "./ui/PcBgmControls";
 import { PcEditorDebugState } from "./ui/PcEditorDebugState";
@@ -37,6 +37,7 @@ export type PcWebXrEditorProps = {
   sourceUrl?: string;
   sourceListUrl?: string;
   sourceMode?: "list" | "provided" | "single";
+  sessionSwitchMode?: "fixed-session" | "player-active-session";
   timelineSessionId?: string;
   timelineVideoId?: string;
   videoId?: string;
@@ -232,6 +233,7 @@ export function PcWebXrEditor({
   sourceUrl = DEFAULT_SOURCE_URL,
   sourceListUrl,
   sourceMode = "list",
+  sessionSwitchMode = "fixed-session",
   timelineSessionId,
   timelineVideoId,
   videoId = DEFAULT_VIDEO_ID
@@ -254,6 +256,8 @@ export function PcWebXrEditor({
   const [cropWorkflowStatus, setCropWorkflowStatus] = useState<CropWorkflowStatus>("idle");
   const [cropWorkflowMessage, setCropWorkflowMessage] = useState("Ready to record a crop path.");
   const [cropExportId, setCropExportId] = useState<string | null>(null);
+  const [activeTimelineSessionId, setActiveTimelineSessionId] = useState<string | undefined>(timelineSessionId);
+  const [activeTimelineVideoId, setActiveTimelineVideoId] = useState<string | undefined>(timelineVideoId);
   const [autoRenderEnabled, setAutoRenderEnabled] = useState(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("xr-auto-render-enabled");
@@ -261,6 +265,13 @@ export function PcWebXrEditor({
   });
   const [questProbeRunId, setQuestProbeRunId] = useState<string | null>(null);
   const { ready: aframeReady, error: loadError } = useAFrameRuntime();
+  useEffect(() => {
+    setActiveTimelineSessionId(timelineSessionId);
+    setActiveTimelineVideoId(timelineVideoId);
+    setTimelineStatus(null);
+    setCropExportId(null);
+  }, [timelineSessionId, timelineVideoId]);
+
   const resolvedInitialSources = useMemo<AFrame360VideoSource[] | undefined>(() => {
     if (sourceMode === "provided") {
       return providedInitialSources;
@@ -290,13 +301,13 @@ export function PcWebXrEditor({
   const bridgePlaybackRate = playbackRate ?? playbackState.playbackRate;
   const timelineBridge = useAFrameTimelineBridge({
     cameraRef,
-    enabled: Boolean(enableTimelineBridge && timelineSessionId && timelineVideoId),
+    enabled: Boolean(enableTimelineBridge && activeTimelineSessionId && activeTimelineVideoId),
     leftControllerRef,
     playbackRate: bridgePlaybackRate,
     rightControllerRef,
     sceneRef,
-    sessionId: timelineSessionId ?? "",
-    videoId: timelineVideoId ?? "",
+    sessionId: activeTimelineSessionId ?? "",
+    videoId: activeTimelineVideoId ?? "",
     videoRef,
     viewTargetSource: pcWorkbench ? "crop-mask" : "xr-pose"
   });
@@ -324,11 +335,11 @@ export function PcWebXrEditor({
       href: window.location.href,
       isSecureContext: window.isSecureContext,
       userAgent: navigator.userAgent,
-      videoId: timelineVideoId,
-      sessionId: timelineSessionId,
+      videoId: activeTimelineVideoId,
+      sessionId: activeTimelineSessionId,
       sourceMode
     });
-  }, [sourceMode, timelineSessionId, timelineVideoId]);
+  }, [activeTimelineSessionId, activeTimelineVideoId, sourceMode]);
 
   useEffect(() => {
     if (!questProbeRunId) {
@@ -420,6 +431,7 @@ export function PcWebXrEditor({
     discardNotice,
     domPlaylistOpen,
     edgePanActive,
+    effectSpeed,
     flushTimeline,
     handleMaskPointerDown,
     handleMaskPointerLeave,
@@ -433,6 +445,7 @@ export function PcWebXrEditor({
     rateWheelTarget,
     recordingRate,
     resetPlaybackRate,
+    resetEffectSpeed,
     resetRecordingRate,
     resumeSampling,
     selectSource,
@@ -950,15 +963,67 @@ export function PcWebXrEditor({
   }, [timelineBridge]);
 
   const handleSelectSource = useCallback(
-    (sourceId: string) => {
-      if (timelineSessionId) {
-        void updateCutSessionVideo(timelineSessionId, sourceId).catch((error) => {
-          console.error("Failed to update session video:", error);
-        });
+    async (sourceId: string) => {
+      try {
+        if (sessionSwitchMode === "player-active-session") {
+          const session = await switchWebXrPlayerSession(sourceId);
+          setActiveTimelineSessionId(session.sessionId);
+          setActiveTimelineVideoId(session.videoId);
+        } else if (activeTimelineSessionId) {
+          const session = await updateCutSessionVideo(activeTimelineSessionId, sourceId);
+          setActiveTimelineVideoId(session.videoId);
+        }
+
+        setTimelineStatus(null);
+        setCropExportId(null);
+        setCropWorkflowStatus("idle");
+        setCropWorkflowMessage("Ready to record a crop path.");
+        selectSource(sourceId);
+      } catch (error) {
+        setCropWorkflowStatus("error");
+        setCropWorkflowMessage(error instanceof Error ? error.message : "Failed to switch WebXR session.");
       }
-      selectSource(sourceId);
     },
-    [timelineSessionId, selectSource]
+    [activeTimelineSessionId, selectSource, sessionSwitchMode]
+  );
+
+  const selectRelativeSource = useCallback(
+    (offset: -1 | 1) => {
+      const sources = playbackState.sources;
+      if (!sources.length) {
+        return;
+      }
+
+      const currentIndex = playbackState.currentIndex < 0 ? 0 : playbackState.currentIndex;
+      const nextIndex = (currentIndex + offset + sources.length) % sources.length;
+      const nextSource = sources[nextIndex];
+      if (nextSource) {
+        void handleSelectSource(nextSource.id);
+      }
+    },
+    [handleSelectSource, playbackState.currentIndex, playbackState.sources]
+  );
+
+  const runPlayerCommand = useCallback(
+    async (command: AFrame360VideoCommand, payload?: AFrame360VideoCommandPayload) => {
+      if (command === "next") {
+        selectRelativeSource(1);
+        return;
+      }
+
+      if (command === "previous") {
+        selectRelativeSource(-1);
+        return;
+      }
+
+      if (command === "select-source" && payload?.sourceId) {
+        await handleSelectSource(payload.sourceId);
+        return;
+      }
+
+      await Promise.resolve(runCommand(command, payload));
+    },
+    [handleSelectSource, runCommand, selectRelativeSource]
   );
 
   const waitForAcceptedPathFlush = useCallback(
@@ -998,7 +1063,7 @@ export function PcWebXrEditor({
   }, [flushTimeline, pauseSampling, refreshTimelineStatus, resumeSampling, runCommand, waitForAcceptedPathFlush]);
 
   const renderCrop = useCallback(async () => {
-    if (!timelineSessionId) {
+    if (!activeTimelineSessionId) {
       setCropWorkflowStatus("error");
       setCropWorkflowMessage("This PC editor session does not have a timeline session id.");
       return;
@@ -1013,7 +1078,7 @@ export function PcWebXrEditor({
         await sealCropPath();
       }
       setCropWorkflowMessage("Backend render-test is running...");
-      const result = await renderTest(timelineSessionId);
+      const result = await renderTest(activeTimelineSessionId);
       const nextExportId = typeof result.exportId === "string" ? result.exportId : null;
       if (!nextExportId) {
         throw new Error("Render finished without an export id.");
@@ -1025,7 +1090,7 @@ export function PcWebXrEditor({
       setCropWorkflowStatus("error");
       setCropWorkflowMessage(error instanceof Error ? error.message : "Render failed.");
     }
-  }, [cropWorkflowStatus, sealCropPath, timelineSessionId]);
+  }, [activeTimelineSessionId, cropWorkflowStatus, sealCropPath]);
 
   const startCrop = useCallback(() => {
     setCropExportId(null);
@@ -1116,7 +1181,7 @@ export function PcWebXrEditor({
           onMaskCenter={setPreviewCenter}
           ref={trajectoryCorrectorRef}
         />
-        <AFrame360VideoControlBridge runCommand={runCommand} sceneRef={sceneRef} />
+        <AFrame360VideoControlBridge runCommand={runPlayerCommand} sceneRef={sceneRef} />
         {pcWorkbench && discardNotice.visible ? (
           <div className="xr-pc-discard-toast" data-tone={discardNotice.tone} role="status" data-testid="xr-pc-discard-toast">
             <span>{discardNotice.active ? "DISCARD ACTIVE" : "DISCARD"}</span>
@@ -1150,18 +1215,20 @@ export function PcWebXrEditor({
           <PcPlayerControls
             domPlaylistOpen={domPlaylistOpen}
             onCloseOverlays={closeDomOverlays}
-            onNext={() => void runCommand("next")}
-            onPrevious={() => void runCommand("previous")}
+            onNext={() => selectRelativeSource(1)}
+            onPrevious={() => selectRelativeSource(-1)}
             onResetPlaybackRate={resetPlaybackRate}
+            onResetEffectSpeed={resetEffectSpeed}
             onResetRecordingRate={resetRecordingRate}
             onSeekTo={(timeMs) => void runCommand("seek-to", { timeMs })}
-            onSelectSource={(source) => handleSelectSource(source.id)}
+            onSelectSource={(source) => void handleSelectSource(source.id)}
             onTogglePlay={() => void runCommand("toggle-play")}
             onTogglePlaylist={toggleDomPlaylist}
             onToggleRecording={toggleCropRecording}
             playbackState={playbackState}
             progressPercent={progressPercent}
             rateWheelTarget={rateWheelTarget}
+            effectSpeed={effectSpeed}
             recordingRate={recordingRate}
             recordingToggleActive={isCropRecording}
             recordingToggleDisabled={isCropRecordingBusy}
@@ -1173,6 +1240,7 @@ export function PcWebXrEditor({
           cameraLookRef={cameraLookRef}
           cropMaskState={cropMaskState}
           edgePanActive={edgePanActive}
+          effectSpeed={effectSpeed}
           maskDragArmed={maskDragArmed}
           playbackState={playbackState}
           recordingRate={recordingRate}
@@ -1188,7 +1256,7 @@ export function PcWebXrEditor({
             cropWorkflowMessage={cropWorkflowMessage}
             cropWorkflowStatus={cropWorkflowStatus}
             exportDownloadUrl={cropExportDownloadUrl}
-            isRenderDisabled={!timelineSessionId}
+            isRenderDisabled={!activeTimelineSessionId}
             onAutoRenderToggle={handleAutoRenderToggle}
             onCut={cutHere}
             onEndCrop={() => void endCrop()}
@@ -1208,7 +1276,7 @@ export function PcWebXrEditor({
         ) : null}
         {pcWorkbench ? <PcEffectsPanel /> : null}
         {pcWorkbench ? <PcEffectPreview /> : null}
-        {pcWorkbench ? <PcBgmControls sessionId={timelineSessionId} /> : null}
+        {pcWorkbench ? <PcBgmControls sessionId={activeTimelineSessionId} /> : null}
         {pcWorkbench ? null : (
           <PcMaskOpacityControls
             cropMaskState={cropMaskState}
@@ -1225,7 +1293,7 @@ export function PcWebXrEditor({
           pcWorkbench={pcWorkbench}
           playbackState={playbackState}
           rightControllerRef={rightControllerRef}
-          runCommand={runCommand}
+          runCommand={runPlayerCommand}
           sceneRef={sceneRef}
           videoId={videoId}
         />

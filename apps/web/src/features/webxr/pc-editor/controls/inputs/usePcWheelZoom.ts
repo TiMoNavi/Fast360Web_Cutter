@@ -18,6 +18,7 @@ function clampMaskOpacity(opacity: number) {
 export function usePcWheelZoom({
   mask,
   maskOpacity,
+  onEffectSpeedWheel,
   pcWorkbench,
   playback,
   rateWheelTarget,
@@ -27,6 +28,7 @@ export function usePcWheelZoom({
 }: {
   mask: PcMaskOperations;
   maskOpacity: number;
+  onEffectSpeedWheel: (deltaY: number) => void;
   pcWorkbench: boolean;
   playback: PcPlaybackOperations;
   rateWheelTarget: PcRateWheelTarget;
@@ -49,6 +51,11 @@ export function usePcWheelZoom({
 
     if (activeWheelTarget === "recording") {
       recording.adjustRecordingRateByWheel(event.deltaY);
+      return;
+    }
+
+    if (activeWheelTarget === "effect-speed") {
+      onEffectSpeedWheel(event.deltaY);
       return;
     }
 

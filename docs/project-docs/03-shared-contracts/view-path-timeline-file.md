@@ -116,9 +116,16 @@ ViewPathTimeline 是编译后的稳定输出。
     "yawRange": "-180..180",
     "pitchRange": "-85..85"
   },
+  "effectSystem": {
+    "schema": "effect-registry.v1",
+    "phases": {},
+    "conflictPolicy": "",
+    "registeredEffects": []
+  },
   "editSegments": [],
   "viewTracks": [],
   "effectTracks": [],
+  "audioTracks": [],
   "coverage": {
     "status": "ready",
     "sourceRanges": [],
@@ -127,12 +134,14 @@ ViewPathTimeline 是编译后的稳定输出。
   },
   "build": {
     "assemblerVersion": "timeline-assembler.v1",
-    "sourcePatchCount": 0,
+    "sourcePatchCount": null,
     "pointCount": 0,
     "warnings": []
   }
 }
 ```
+
+当前 `apps/api/app/timeline_assembler.py` 已经输出 `effectSystem` 和 `audioTracks`。`sourcePatchCount` 目前没有从数据库 patch log 计算，当前实现会写成 `null`；理想状态应在 assembler 接入数据库后写入真实 patch 数。
 
 ## 时间轴映射
 

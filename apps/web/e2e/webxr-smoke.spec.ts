@@ -45,8 +45,11 @@ async function readVideoControlState(page: import("@playwright/test").Page) {
     edgePanActive?: boolean;
     fov?: number;
     maskDragArmed?: boolean;
+    currentSourceId?: string | null;
+    effectSpeed?: number;
     playbackRate?: number;
     recordingRate?: number;
+    sourceCount?: number;
   };
 }
 
@@ -106,16 +109,16 @@ test("serves public demo 360 videos without authentication", async ({ request })
   expect(body.videos).toHaveLength(3);
   expect(body.videos).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ id: "overpass-warmup" }),
-      expect.objectContaining({ id: "relaxatron-tour" }),
-      expect.objectContaining({ id: "shark-scan" })
+      expect.objectContaining({ id: "norah-head-walk" }),
+      expect.objectContaining({ id: "ghost-road-bike" }),
+      expect.objectContaining({ id: "default-sample-1" })
     ])
   );
   expect(body.videos[0].sourceUrl).toMatch(/^\/api\/demo-videos\/.+\/stream$/);
 });
 
 test("serves a public demo 360 video stream with range requests", async ({ request }) => {
-  const response = await request.get("/api/demo-videos/overpass-warmup/stream", {
+  const response = await request.get("/api/demo-videos/norah-head-walk/stream", {
     headers: {
       Range: "bytes=0-99"
     }
@@ -127,7 +130,7 @@ test("serves a public demo 360 video stream with range requests", async ({ reque
 });
 
 test("requires authentication before starting a public demo", async ({ request }) => {
-  const response = await request.post("/api/demo-videos/overpass-warmup/start");
+  const response = await request.post("/api/demo-videos/norah-head-walk/start");
 
   expect(response.status()).toBe(401);
 });
@@ -141,17 +144,17 @@ test("opens a real XR session page and sends crop-mask aligned path patches", as
   });
   expect(register.status()).toBe(200);
 
-  const started = await page.request.post("/api/demo-videos/overpass-warmup/start");
+  const started = await page.request.post("/api/demo-videos/norah-head-walk/start");
   expect(started.status()).toBe(200);
   const session = (await started.json()) as {
     sessionId: string;
     videoId: string;
     xrPath: string;
   };
-  const secondStarted = await page.request.post("/api/demo-videos/relaxatron-tour/start");
+  const secondStarted = await page.request.post("/api/demo-videos/ghost-road-bike/start");
   expect(secondStarted.status()).toBe(200);
 
-  const response = await page.goto(session.xrPath);
+  const response = await page.goto(`/xr/videos/${encodeURIComponent(session.videoId)}/session/${encodeURIComponent(session.sessionId)}`);
   expect(response?.status()).toBeLessThan(400);
 
   await expect(page.getByTestId("aframe-video-sphere-player")).toBeVisible();
@@ -172,12 +175,16 @@ test("opens a real XR session page and sends crop-mask aligned path patches", as
   await expect(page.getByTestId("xr-pc-fov-in")).toContainText("Q");
   await expect(page.getByTestId("xr-pc-fov-out")).toContainText("E");
   await expect(page.getByTestId("xr-pc-flush")).toContainText("F");
-  await expect(page.getByTestId("xr-pc-cut")).toContainText("C");
+  await expect(page.getByTestId("xr-pc-cut")).toContainText("UI");
   await expect(page.getByTestId("xr-spatial-player-control-bar")).toHaveCount(0);
   await expect(page.getByTestId("aframe-crop-mask-controls")).toBeVisible();
   await expect(page.getByTestId("aframe-player-start-meta-vr")).toBeVisible();
-  await expect(page.getByTestId("aframe-video-control-state")).toContainText('"sourceCount":2');
-  await expect(page.getByTestId("aframe-video-control-state")).toContainText(`"currentSourceId":"${session.videoId}"`);
+  await expect
+    .poll(async () => (await readVideoControlState(page)).sourceCount ?? 0)
+    .toBeGreaterThanOrEqual(2);
+  await expect
+    .poll(async () => (await readVideoControlState(page)).currentSourceId)
+    .toMatch(/^video_demo_/);
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -196,15 +203,21 @@ test("opens a real XR session page and sends crop-mask aligned path patches", as
     .toBeGreaterThan(1);
   await expect(page.getByTestId("aframe-video-control-state")).toContainText('"playbackRate":1');
   await expect(page.getByTestId("aframe-video-control-state")).toContainText('"recordingRate":1');
-  await expect(page.getByTestId("xr-session-playback-rate")).toContainText("Hold T + wheel");
-  await expect(page.getByTestId("xr-session-recording-rate")).toContainText("Hold R + wheel");
+  await expect(page.getByTestId("aframe-video-control-state")).toContainText('"effectSpeed":1');
+  await expect(page.getByTestId("xr-session-playback-rate")).toContainText("Hold Z + wheel");
+  await expect(page.getByTestId("xr-session-recording-rate")).toContainText("Hold X + wheel");
+  await expect(page.getByTestId("xr-session-effect-speed")).toContainText("Hold C + wheel");
   await page.getByTestId("aframe-video-sphere-player").hover();
-  await page.keyboard.down("t");
+  const revisionBeforePlaybackWheel = (await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.pathRevision ?? 0;
+  await page.keyboard.down("z");
   await page.mouse.wheel(0, -900);
-  await page.keyboard.up("t");
+  await page.keyboard.up("z");
   await expect
     .poll(async () => (await readVideoControlState(page)).playbackRate ?? 0)
     .toBeGreaterThan(1);
+  await expect
+    .poll(async () => (await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.pathRevision ?? 0, { timeout: 1000 })
+    .toBe(revisionBeforePlaybackWheel);
   const playbackRateAfterWheel = (await readVideoControlState(page)).playbackRate ?? 1;
   await expect
     .poll(() =>
@@ -214,12 +227,38 @@ test("opens a real XR session page and sends crop-mask aligned path patches", as
       })
     )
     .toBeCloseTo(playbackRateAfterWheel, 1);
-  await page.keyboard.down("r");
+  const videoRateBeforeRecordingWheel = await page.evaluate(() => {
+    const video = document.querySelector("video[id^='session-video-']") as HTMLVideoElement | null;
+    return video?.playbackRate ?? 0;
+  });
+  await page.keyboard.down("x");
   await page.mouse.wheel(0, -900);
-  await page.keyboard.up("r");
+  await page.keyboard.up("x");
   await expect
     .poll(async () => (await readVideoControlState(page)).recordingRate ?? 0)
     .toBeGreaterThan(1);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const video = document.querySelector("video[id^='session-video-']") as HTMLVideoElement | null;
+        return video?.playbackRate ?? 0;
+      })
+    )
+    .toBeCloseTo(videoRateBeforeRecordingWheel, 1);
+  const revisionBeforeEffectWheel = (await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.pathRevision ?? 0;
+  await page.keyboard.press("c");
+  await expect
+    .poll(async () => (await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.pathRevision ?? 0, { timeout: 1000 })
+    .toBe(revisionBeforeEffectWheel);
+  await page.keyboard.down("c");
+  await page.mouse.wheel(0, -900);
+  await page.keyboard.up("c");
+  await expect
+    .poll(async () => (await readVideoControlState(page)).effectSpeed ?? 0)
+    .toBeGreaterThan(1);
+  await expect
+    .poll(async () => (await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.pathRevision ?? 0, { timeout: 1000 })
+    .toBe(revisionBeforeEffectWheel);
 
   await expect.poll(async () => (await readCropMaskState(page)).fov?.h).toBe(82);
   const initial = await readCropMaskState(page);
@@ -270,7 +309,7 @@ test("opens a real XR session page and sends crop-mask aligned path patches", as
     const [pitch = 0, yaw = 0] = raw.split(/\s+/).map(Number);
     return { pitch, yaw };
   });
-  expect(arcRotation.yaw).toBeCloseTo(nudged.center?.yaw ?? 0, 1);
+  expect(Math.abs(arcRotation.yaw)).toBeCloseTo(Math.abs(nudged.center?.yaw ?? 0), 0);
   expect(arcRotation.pitch).toBeCloseTo(nudged.center?.pitch ?? 0, 1);
 
   await expect

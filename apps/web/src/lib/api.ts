@@ -140,6 +140,17 @@ export type CutSessionSummary = {
   status: string;
 };
 
+export type WebXrPlayerSession = {
+  sessionId: string;
+  videoId: string;
+  status: string;
+  timelineRevision: number;
+  source: "active" | "created" | "latest-session" | "switched" | string;
+  xrPath: string;
+  latestExport?: ExportStatus | null;
+  music?: SessionMusicState | null;
+};
+
 export type AuthUser = {
   id: string;
   email: string;
@@ -254,6 +265,21 @@ export async function getMe(options?: RequestOptions): Promise<AuthUser> {
 export async function listVideos(options?: RequestOptions): Promise<VideoSummary[]> {
   const data = await apiGet<{ videos: VideoSummary[] }>("/api/videos", options);
   return data.videos;
+}
+
+export async function getWebXrPlayerSession(options?: RequestOptions): Promise<WebXrPlayerSession> {
+  return apiGet<WebXrPlayerSession>("/api/xr/player-session", options);
+}
+
+export async function switchWebXrPlayerSession(
+  videoId: string,
+  options?: RequestOptions
+): Promise<WebXrPlayerSession> {
+  return apiPutJson<WebXrPlayerSession>(
+    "/api/xr/player-session",
+    { videoId },
+    options
+  );
 }
 
 export async function listDemoVideos(): Promise<DemoVideoSummary[]> {

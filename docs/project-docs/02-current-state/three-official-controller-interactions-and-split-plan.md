@@ -1,80 +1,52 @@
-# Three Official Interactive Lab 手柄交互与拆分计划
+# Three Official 手柄交互与拆分计划
 
-日期：2026-05-24
+日期：2026-05-25
 
-本文专门记录 `/xr/three-official-interactive-lab` 当前的 Quest / WebXR 手柄按键交互，以及后续如何把交互逻辑从 `ThreeOfficialInteractiveLab.tsx` 中拆出去。
+关联页面：
 
-相关代码：
+```text
+/xr/three-official-interactive-lab
+```
+
+关联现状总览：
+
+```text
+docs/project-docs/02-current-state/three-official-interactive-lab-current-state.md
+```
+
+本文只记录手柄输入、空间 UI 点击路径和后续拆分计划。页面总体能力和代码债务见当前状态总览。
+
+## 当前代码位置
+
+主实现：
 
 ```text
 apps/web/src/components/three/ThreeOfficialInteractiveLab.tsx
+```
+
+辅助文件：
+
+```text
 apps/web/src/components/three/three-official-lab/constants.ts
 apps/web/src/components/three/three-official-lab/runtimeHelpers.ts
 apps/web/src/components/three/three-official-lab/types.ts
 apps/web/e2e/three-official-interactive-lab.spec.ts
 ```
 
-## 是否可以继续拆交互
+当前拆分只完成了 UI 展示组件、常量、类型和少量 helper。最重的手柄输入解释仍在主组件里。
 
-可以，而且应该拆。
+## 当前真实手柄映射
 
-当前 `ThreeOfficialInteractiveLab.tsx` 里已经拆出了 UI、样式、常量、类型和纯 helper，但最重的一块仍然留在主文件里：
+### Trigger / Select
 
-```text
-WebXR controller listener
-synthetic test event listener
-select / squeeze / thumbstick / quick menu 状态机
-ray -> sphere hit -> ViewTargetPose
-crop frame / reticle / target ring 的实时更新
-semantic event 派发
-React state 写入
-```
-
-建议下一步不要一次性抽走整个 Three 场景，而是先抽交互适配层：
-
-```text
-useThreeOfficialControllerInput
-  负责绑定 select/squeeze/thumbstick/B button/synthetic events
-  负责把原始输入转换成高层动作
-
-threeOfficialInteractionOperations
-  负责 playPause / lock / setFov / setMaskOpacity / start/end crop / create effect 等动作入口
-
-threeOfficialRayTargeting
-  负责 ray、sphere hit、ViewTargetPose、smooth move 的几何计算
-```
-
-理想方向是：
-
-```text
-raw XR input
--> input adapter
--> semantic operation
--> scene state / React state
--> timeline bridge / backend bridge
-```
-
-而不是继续：
-
-```text
-controller event
--> 直接改 React state
--> 直接 dispatch semantic event
--> 顺手改 mesh / material
-```
-
-## 当前真实 WebXR 手柄输入
-
-### 1. Trigger / Select
-
-来源：
+事件来源：
 
 ```text
 controller.addEventListener("selectstart")
 controller.addEventListener("selectend")
 ```
 
-当前绑定：
+当前约定：
 
 ```text
 renderer.xr.getController(0) -> left
@@ -83,42 +55,34 @@ renderer.xr.getController(1) -> right
 
 行为：
 
-| 输入 | 条件 | 行为 |
+| 输入 | 条件 | 当前行为 |
 | --- | --- | --- |
-| 单手 trigger 按下 | 任意手 | 进入 pending head-gaze 判断；提示 “hold to steer viewfinder” |
-| 单手 trigger 短按释放 | 按住时间 < 280ms | 用该手 controller ray 命中 360 sphere，平滑移动 view target |
-| 单手 trigger 长按 | 按住超过 280ms | viewfinder 跟随头显 gaze |
-| 长按后释放 | followMode 为 `head_gaze` | 提交头显 gaze 为最终 view target |
-| 左右 trigger 在 160ms 内同时按下 | dual select combo | 播放 / 暂停视频 |
+| 单手 select start | ray 命中 HTMLMesh 可交互 DOM | 触发空间 UI mousedown，阻止 head-gaze pending |
+| 单手 select end | 前面按到了 HTMLMesh | 触发 mouseup + click |
+| 单手短按 select | 没按到 UI，按住时间小于 280ms | ray 命中视频球，平滑移动 view target |
+| 单手长按 select | 按住超过 280ms | 进入 head-gaze follow |
+| 长按后松开 | followMode 为 head_gaze | 提交当前头显 gaze 为 view target |
+| 左右 select 160ms 内同时按下 | dual select combo | 播放 / 暂停 |
+| left grip + right select | 视频播放中 | 标记 discard range 的实验入口 |
 
-对应语义事件：
+语义事件：
 
 ```text
 playPause
+unlockViewport
 setViewTarget
 lockViewport
-flushPath reason=lock
+flushPath(reason="lock")
+discardRange
+restoreRange
+flushPath(reason="discard")
 ```
 
-当前 UI 状态变化：
+需要复查：discard range 当前沿用了 PC timeline 操作里的 `discardRange` 开始、`restoreRange` 结束模式。这个命名对新读代码的人很反直觉，需要在协议文档里讲清楚，或者重命名成更明确的 range start/end 事件。
 
-```text
-短按 ray click -> LOCKED
-长按 head gaze -> GAZE / PENDING，释放后 LOCKED
-双 trigger -> 播放状态变化
-```
+### Grip / Squeeze
 
-测试入口：
-
-```text
-window.dispatchEvent(new CustomEvent("three-official-controller-select", {
-  detail: { hand: "right", phase: "start", rayOrigin, rayDirection }
-}))
-```
-
-### 2. Grip / Squeeze
-
-来源：
+事件来源：
 
 ```text
 controller.addEventListener("squeezestart")
@@ -127,337 +91,226 @@ controller.addEventListener("squeezeend")
 
 当前左右手含义不同：
 
-| 输入 | 行为 |
+| 输入 | 当前行为 |
 | --- | --- |
 | left squeeze start | 开启 opacity modifier |
-| left squeeze end | 关闭 opacity modifier |
-| right squeeze start | 进入 controller ray 连续拖动 view target |
-| right squeeze end | 提交当前 controller ray 指向的 view target |
+| left squeeze end | 关闭 opacity modifier，若正在 discard range 则结束 range |
+| right squeeze start | 进入 controller ray drag |
+| right squeeze end | 提交右手 ray 当前命中点为 view target |
 
-右手 grip 拖动流程：
+右手 grip drag 流程：
 
 ```text
 right squeeze start
 -> followMode = controller_ray
 -> uiMode = DRAG
 -> controllerAimStart
--> 每帧用 right controller ray preview view target
+-> 每帧用 right controller ray 命中视频球
+-> preview view target
 -> right squeeze end
 -> commitViewTarget
 -> controllerAimEnd
 ```
 
-左手 grip 修饰流程：
+左手 grip modifier 流程：
 
 ```text
 left squeeze start
 -> leftGripModifier = true
 -> uiMode = OPACITY
--> 右摇杆改为控制 mask opacity
+-> right thumbstick 从 FOV 改成 mask opacity
 
 left squeeze end
 -> leftGripModifier = false
 -> uiMode 回到 LOCKED / IDLE
 ```
 
-测试入口：
+### Right Thumbstick
+
+读取来源：
 
 ```text
-window.dispatchEvent(new CustomEvent("three-official-controller-squeeze", {
-  detail: { hand: "right", phase: "start", rayOrigin, rayDirection }
-}))
-```
-
-### 3. Right Thumbstick
-
-来源：
-
-```text
+inputSource.handedness === "right"
 inputSource.gamepad.axes[3] ?? inputSource.gamepad.axes[1]
 ```
 
-合成测试入口：
+行为：
 
-```text
-window.dispatchEvent(new CustomEvent("three-official-thumbstick", {
-  detail: { hand: "right", y: 1 }
-}))
-```
-
-行为分两种：
-
-| 条件 | 行为 |
+| 条件 | 当前行为 |
 | --- | --- |
-| 未按 left grip | 右摇杆上下连续调 FOV |
-| 正在按 left grip | 右摇杆上下连续调 mask opacity |
+| 未按 left grip | right thumbstick 上下连续调 FOV |
+| 正在按 left grip | right thumbstick 上下连续调 mask opacity |
+| 正在 discard range | thumbstick 输入被忽略 |
 
-FOV 行为：
+FOV 参数：
 
 ```text
 deadzone = 0.18
 max speed = 34 deg/s
-release debounce = 260ms
+flush debounce = 260ms
+page clamp = 48 到 112
 ```
 
-触发语义：
+Opacity 参数：
 
 ```text
-nudgeFov
-flushPath reason=fov
+range = 0.00 到 0.95
+max speed = 0.72/s
 ```
 
-Opacity 行为：
+注意：timeline bridge reducer 里的 FOV 范围仍是 35 到 110。页面层和协议层范围需要统一。
 
-```text
-mask opacity min = 0
-mask opacity max = 0.95
-max speed = 0.72 / s
-```
+### Right B / Quick Menu
 
-当前 opacity 只更新本地 UI / shader uniform，不派发 timeline semantic event。
-
-### 4. Right B Button / Quick Menu
-
-来源：
+读取来源：
 
 ```text
 inputSource.gamepad.buttons[5].pressed
 ```
 
-当前假设：
+行为：
 
 ```text
-right controller button index 5 -> B button / quick menu button
+B press
+-> open quick menu
+
+B hold + aim
+-> update tile selection
+
+B release
+-> execute selected action
+```
+
+当前菜单数据：
+
+```text
+START
+END
+RENDER
+CUT
+LOCK
+BLACK
+WHITE
+SAVE
+DROP
+UNDO
+VHS
+```
+
+当前执行函数还支持：
+
+```text
+fovIn
+fovOut
+```
+
+但 `QUICK_MENU_ITEMS` 没有暴露这两个 action。后续要么删掉死分支，要么把 FOV 项放回菜单。
+
+left grip + right B：
+
+```text
+toggle crop workflow
+```
+
+这是一条快速录制入口，当前仍偏 lab。
+
+### Left Menu Button
+
+读取来源：
+
+```text
+inputSource.gamepad.buttons[6].pressed
 ```
 
 行为：
 
-| 输入 | 行为 |
-| --- | --- |
-| B press | 打开 quick menu |
-| B hold + aim | 更新当前 tile selection |
-| B release | 执行当前选中 action 并关闭 |
-
-Quick menu 当前是 3x3 tile：
-
 ```text
-START      END        RENDER
-CUT        LOCK       BLACK
-FOV +      FOV -      WHITE
+toggleSpatialMenusVisible()
 ```
 
-内部 action：
+它会隐藏或恢复 player/workbench/mode strip/popup，并关闭 quick menu。
 
-| action | 行为 |
-| --- | --- |
-| startCrop | 开始 crop workflow |
-| endCrop | 结束 / seal crop workflow |
-| render | preview render |
-| cut | dispatch cutHere |
-| lock | lock / unlock viewport |
-| blackFade | create black fade effect |
-| whiteFlash | create white flash effect |
-| fovIn | FOV -5 |
-| fovOut | FOV +5 |
+按钮 index 5 和 6 是当前 Quest/Meta controller 假设。正式化之前要在真机记录里确认不同浏览器/运行时的稳定性。
 
-当前测试覆盖：
+## HTMLMesh 空间按钮路径
 
-```text
-center point -> lock
-top-left tile -> startCrop
-```
+页面不是只读手柄物理按钮，也支持 controller ray 点击空间 UI。
 
-合成测试入口：
-
-```text
-window.dispatchEvent(new CustomEvent("three-official-quick-menu", {
-  detail: { phase: "press", pointerPosition }
-}))
-window.dispatchEvent(new CustomEvent("three-official-quick-menu", {
-  detail: { phase: "aim", pointerPosition }
-}))
-window.dispatchEvent(new CustomEvent("three-official-quick-menu", {
-  detail: { phase: "release", pointerPosition }
-}))
-```
-
-## HTMLMesh / 空间按钮交互
-
-Three official lab 还有一类不是物理按键，而是 controller ray 点空间 UI。
-
-当前路径：
+当前链路：
 
 ```text
 InteractiveGroup.listenToXRControllerEvents(controller)
 HTMLMesh(domElement)
-DOM button click listener
+ray -> HTMLMesh uv
+HTMLMesh.dispatchEvent({ type: "mousedown" | "mouseup" | "click" })
+DOM button listener
+data-action / data-module / data-player-action
 ```
 
-也就是说，手柄 ray 可以点到 HTMLMesh 上的 DOM button，最后触发普通 DOM click。
-
-### Player rail 按钮
-
-来源：
+主文件中还手写了一层 ray hit 判断：
 
 ```text
-button[data-player-action]
+getUiHitFromRay()
+domSourceForHtmlMesh()
+hasInteractiveDomTarget()
+dispatchHtmlMeshPointerEventFromRay()
+dispatchHtmlMeshPointerEventFromController()
 ```
 
-当前动作：
+这部分应该独立成 `htmlMeshPointerAdapter` 或归入 `useThreeOfficialControllerInput`，否则 DOM、raycast、button 分发会继续绑死在主组件里。
 
-| action | 行为 |
-| --- | --- |
-| PLAY_TOGGLE | 播放 / 暂停 |
-| PREV | 上一个 source |
-| NEXT | 下一个 source |
-| RATE_0_5 | 播放 0.5x |
-| RATE_1 | 播放 1x |
-| RATE_2 | 播放 2x |
-| RECORD_TOGGLE | 开始 / 结束 crop recording |
-| RECORD_RATE_DOWN | recording rate -0.25 |
-| RECORD_RATE_RESET | recording rate = 1 |
-| RECORD_RATE_UP | recording rate +0.25 |
-| SELECT_SOURCE | 切换 source |
-| TOGGLE_UI | DIM / RESTORE player rail |
+## Desktop 与测试输入
 
-### Workbench 按钮
+当前仍保留桌面和 synthetic 输入，主要用于开发和 Playwright。
 
-来源：
+Desktop：
 
 ```text
-button[data-action]
-button[data-module]
+canvas click -> raycast sphere -> smooth view target move
+ctrl/cmd + canvas click -> instant commit
 ```
 
-当前高频动作：
-
-| action | 行为 |
-| --- | --- |
-| CUT | cutHere |
-| LOCK | lock / unlock viewport |
-| FOV_IN | FOV -5 |
-| FOV_OUT | FOV +5 |
-| YAW_LEFT | yaw -5 |
-| YAW_RIGHT | yaw +5 |
-| PITCH_UP | pitch +5 |
-| PITCH_DOWN | pitch -5 |
-| START_CROP | start workflow |
-| END_CROP | end workflow |
-| RENDER | render workflow |
-| PLAY | play / pause |
-| SAVE / FLUSH | flushPath reason=live |
-| DISCARD | discardRange + flush |
-| RESTORE | restoreRange + flush |
-
-当前 module：
+Synthetic events：
 
 ```text
-FRAME / FOV / FX / WORKFLOW / BGM / EXPORT / SESSION / SAMPLER
+three-official-controller-select
+three-official-controller-aim
+three-official-controller-squeeze
+three-official-quick-menu
+three-official-menu-toggle
+three-official-record-toggle
+three-official-thumbstick
 ```
 
-module 现在主要改变 `openModule` 和 workbench UI 状态；旧的中央 popup 已经移除。
+这些事件非常有测试价值，但不应无限期散落在生产组件里。建议由 input adapter 统一暴露，只在测试环境和 lab 页面打开。
 
-## 非手柄但相关的屏幕输入
+## 为什么现在必须拆
 
-PC / test 环境也支持 canvas 点击 360 sphere：
-
-| 输入 | 行为 |
-| --- | --- |
-| canvas click | raycast sphere，平滑移动 view target |
-| ctrl/cmd + canvas click | raycast sphere，立即提交 view target |
-
-这不是 Quest 手柄交互，但它复用了同一套：
+`ThreeOfficialInteractiveLab.tsx` 当前 2646 行。手柄相关逻辑和这些内容混在一起：
 
 ```text
-ray -> sphere hit -> ViewTargetPose -> commit / smooth move
+Three scene 创建
+renderer/camera 生命周期
+WebXR requestSession
+video source / HLS
+crop mask shader
+reticle / frame / target ring 每帧更新
+HTMLMesh 创建
+DOM query listener
+backend path patch
+render-test
+BGM / effect lab state
+synthetic test event
+cleanup
 ```
 
-因此后续应归到 `rayTargeting` helper，而不是放在 React 组件内。
-
-## 当前交互代码为什么适合拆
-
-现在主文件里的交互逻辑有三类职责混在一起：
-
-```text
-1. 输入读取
-   WebXR select/squeeze/gamepad axes/buttons
-   synthetic CustomEvent
-   canvas pointer
-
-2. 状态机
-   dual select combo
-   head-gaze hold
-   controller ray drag
-   thumbstick FOV debounce
-   left grip opacity modifier
-   quick menu press/aim/release
-
-3. 执行动作
-   setFovValue
-   setMaskOpacityValue
-   commitViewTarget
-   toggleVideoPlayback
-   start/end/render crop workflow
-   createWorkflowEffect
-   emitSemantic
-```
-
-拆分时不要把这三类继续放在同一个文件里。
+继续新增 UI 会让输入状态机越来越难改。更危险的是，有些状态通过 React state 与 ref mirror 同步，有些函数被 `useEffect([])` 捕获，有些 DOM listener 又靠依赖数组重绑。这种结构能跑，但后续会很容易出现 stale closure、重复 listener、状态不同步、资源释放不完整的问题。
 
 ## 建议拆分结构
 
-### 第一刀：输入绑定 hook
+### 1. ray targeting helper
 
-```text
-apps/web/src/components/three/three-official-lab/useThreeOfficialControllerInput.ts
-```
-
-职责：
-
-```text
-bind selectstart/selectend
-bind squeezestart/squeezeend
-read gamepad axes
-read B button
-bind synthetic CustomEvent
-cleanup listeners
-```
-
-不应该负责：
-
-```text
-创建 scene / renderer
-创建 HTMLMesh
-修改 React JSX
-发 backend request
-渲染 UI
-```
-
-### 第二刀：交互状态机
-
-```text
-apps/web/src/components/three/three-official-lab/controllerInteractionState.ts
-```
-
-职责：
-
-```text
-dual select combo state
-head gaze hold state
-thumbstick FOV debounce state
-quick menu state
-controller ray override state
-```
-
-这部分可以先是普通 factory：
-
-```text
-createControllerInteractionState()
-```
-
-不要急着做 React hook。
-
-### 第三刀：ray targeting helper
+建议文件：
 
 ```text
 apps/web/src/components/three/three-official-lab/rayTargeting.ts
@@ -468,15 +321,85 @@ apps/web/src/components/three/three-official-lab/rayTargeting.ts
 ```text
 readObjectForward
 ray -> sphere intersection
-direction -> ViewTargetPose
-pointer -> ViewTargetPose
-controller -> ViewTargetPose
-smooth target interpolation
+pointer event -> ray
+controller object -> ray
+ray hit -> ViewTargetPose
+smooth move interpolation
 ```
 
-当前已有一部分在 `runtimeHelpers.ts`，但仍有一些 raycaster / sphere hit 逻辑留在主文件里。
+不负责：
 
-### 第四刀：quick menu runtime
+```text
+React state
+DOM listener
+backend request
+semantic dispatch
+```
+
+这是第一刀，因为它最容易做成纯函数/小对象，也最容易用现有测试验证坐标没有反号。
+
+### 2. controller interaction state
+
+建议文件：
+
+```text
+apps/web/src/components/three/three-official-lab/controllerInteractionState.ts
+```
+
+职责：
+
+```text
+dual select combo
+head gaze hold timer
+right grip drag state
+left grip opacity modifier
+thumbstick active/debounce/pendingFlush
+B quick menu pressed/aim/release
+left menu button edge trigger
+discard range active state
+```
+
+目标是把“输入状态机”从“执行动作”里拆开。
+
+### 3. controller input adapter
+
+建议文件：
+
+```text
+apps/web/src/components/three/three-official-lab/useThreeOfficialControllerInput.ts
+```
+
+职责：
+
+```text
+绑定 selectstart/selectend
+绑定 squeezestart/squeezeend
+读取 gamepad axes/buttons
+绑定 synthetic CustomEvent
+cleanup listeners
+输出高层动作
+```
+
+它可以暴露类似：
+
+```text
+onRayClick(hand, ray)
+onHeadGazeCommit()
+onControllerDragStart(hand)
+onControllerDragMove(hand, ray)
+onControllerDragEnd(hand, ray)
+onFovDelta(delta)
+onMaskOpacityDelta(delta)
+onQuickMenuAction(action)
+onMenuToggle()
+onRecordToggle()
+```
+
+不应该直接知道 `sendViewPathPatch` 或 React JSX。
+
+### 4. quick menu runtime
+
+建议文件：
 
 ```text
 apps/web/src/components/three/three-official-lab/quickMenuRuntime.ts
@@ -485,103 +408,134 @@ apps/web/src/components/three/three-official-lab/quickMenuRuntime.ts
 职责：
 
 ```text
-create quick menu tile meshes
-place quick menu
-update tile selection
-open / close
+创建 quick menu Group 和 tile meshes
+tile hit test
+highlight selection
+open / aim / release / close
 dispose materials
 ```
 
-它可以只暴露：
+动作执行不放在这里，只返回 `QuickMenuAction` 给上层 operation。
+
+### 5. workflow bridge
+
+建议文件：
 
 ```text
-open(anchor)
-aim(pointer/controller)
-release()
-tickBButton()
-dispose()
-```
-
-### 第五刀：scene runtime hook
-
-最后再考虑：
-
-```text
-useThreeOfficialSceneRuntime
+apps/web/src/components/three/three-official-lab/workflowBridge.ts
 ```
 
 职责：
 
 ```text
-renderer / scene / camera
+startCropWorkflow
+endCropWorkflow
+buildBackendPathPatch
+flushBackendPath
+renderCropWorkflow
+backend status
+export download url
+```
+
+后续 effect event queue 和 BGM export binding 也应该放在这个方向，而不是继续塞进输入事件。
+
+### 6. scene runtime hook
+
+建议最后再做：
+
+```text
+apps/web/src/components/three/three-official-lab/useThreeOfficialSceneRuntime.ts
+```
+
+职责：
+
+```text
+scene / camera / renderer
 video sphere
 crop mask
-HTMLMesh planes
+crop frame / reticle / target ring
+HTMLMesh attach
 controller models
 animation loop
 cleanup
 ```
 
-这一步风险最大，因为它会碰到大量 refs、state setters、semantic emitters。建议在前四刀完成后再做。
+这是风险最高的一步。不要在 ray targeting、controller state、workflow bridge 之前先抽它。
 
-## 拆分顺序建议
+## 安全拆分顺序
 
-安全顺序：
+建议顺序：
 
 ```text
-1. 先抽文档中列出的类型和状态结构，不改变行为。
-2. 抽 ray targeting helper，跑 sphere click / controller ray tests。
-3. 抽 quick menu runtime，跑 B hold quick menu tests。
-4. 抽 controller input binding，跑全部 controller tests。
-5. 最后抽 scene runtime hook。
+1. 抽 rayTargeting，不改行为。
+2. 跑 sphere click、controller ray click、backend coordinate sign drift 测试。
+3. 抽 quickMenuRuntime，只让它返回 action。
+4. 跑 B hold quick menu 测试。
+5. 抽 controllerInteractionState。
+6. 跑 select/grip/thumbstick/opacity/discard range 测试。
+7. 抽 workflowBridge。
+8. 跑 path patch 和 render-test 测试。
+9. 最后考虑 scene runtime hook。
 ```
 
 每一步至少跑：
 
 ```text
 npm --workspace apps/web run typecheck
-npx playwright test -c apps/web/playwright.config.ts e2e/three-official-interactive-lab.spec.ts -g "controller|thumbstick|quick menu|PC-style player controls|player-rail workflow"
+npx playwright test -c apps/web/playwright.config.ts e2e/three-official-interactive-lab.spec.ts
 ```
 
-## 当前测试覆盖的手柄交互
-
-已有 e2e 覆盖：
+如果只做局部拆分，可以先 grep：
 
 ```text
-dual select 播放/暂停
-right trigger short ray click
-right grip hold ray drag
+npx playwright test -c apps/web/playwright.config.ts e2e/three-official-interactive-lab.spec.ts -g "sphere click|controller|thumbstick|quick menu|backend"
+```
+
+## 当前测试缺口
+
+已有覆盖：
+
+```text
+canvas sphere click
+ctrl click instant commit
+dual select play toggle
+backend playlist selector
+player rail workflow controls
+path patch coordinate sign drift
+render-test download link
+B quick menu lock/startCrop
+short controller select ray click
+right grip drag
 right thumbstick FOV
 left grip + right thumbstick opacity
-B hold quick menu lock
-B hold quick menu startCrop
-player rail workflow controls
-backend path samples without coordinate sign drift
 ```
 
-还缺的测试：
+拆分前后应补：
 
 ```text
-trigger long hold -> head gaze follow -> release commit
-left trigger ray click
-right B quick menu fovIn / fovOut / render / effects
-real HTMLMesh controller ray click player buttons
+long hold select -> head gaze follow -> release commit
+left select ray click
 right thumbstick negative direction
-left grip + right thumbstick negative opacity direction
-quick menu close without selected action
+left grip + thumbstick negative opacity
+quick menu save/discard/restore/render/effects
+quick menu release without selection
+left menu button hide/restore
+left grip + right trigger discard range
+repeated mount/unmount cleanup
 ```
 
-## 结论
+## 当前结论
 
-当前交互已经足够复杂，继续留在 `ThreeOfficialInteractiveLab.tsx` 会拖慢后续 UI 迭代。
+当前手柄交互已经足够复杂，继续留在主组件里会拖慢后续 VR UI 迭代。
 
-最值得先拆的是：
+最先拆的不是视觉组件，而是：
 
 ```text
-controller input binding
-controller interaction state
 ray targeting
+controller interaction state
+controller input adapter
 quick menu runtime
+workflow bridge
 ```
 
-暂时不建议第一步就拆整个 Three scene runtime。先把“输入怎么被解释成动作”从主文件拿出来，风险更小，也更容易写测试。
+这些拆出来后，主组件才能重新变成“组合场景和 UI 的壳”，而不是所有输入、业务和渲染运行时的总开关。

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EffectEventName } from "@/lib/path-protocol";
@@ -45,7 +45,7 @@ const EFFECT_CATEGORIES: EffectCategory[] = [
       { eventName: "filter.color_grade", id: "sunset-grade", key: "3", label: "Sunset grade", params: { tint: "sunset" } },
       { eventName: "filter.color_grade", id: "cold-chrome", key: "4", label: "Cold chrome", params: { tint: "chrome" } },
       { eventName: "filter.color_grade", id: "warm-vhs", key: "5", label: "Warm VHS", params: { tint: "warm" } },
-      { eventName: "filter.color_grade", id: "mono-scan", key: "6", label: "Mono scan", params: { tint: "mono" } }
+      { durationMs: 760, eventName: "filter.blur", id: "soft-blur", key: "6", label: "Soft blur", params: { edgeMs: 180, radius: 21, strength: 0.48 } }
     ]
   },
   {
@@ -68,10 +68,14 @@ const EFFECT_CATEGORIES: EffectCategory[] = [
     effects: [
       { eventName: "frame.push_in", id: "push-in", key: "1", label: "Push in" },
       { eventName: "frame.pull_out", id: "pull-out", key: "2", label: "Pull out" },
-      { eventName: "frame.tilt_glide", id: "tilt-glide", key: "3", label: "Tilt glide" },
-      { eventName: "frame.roll_pulse", id: "roll-pulse", key: "4", label: "Roll pulse" },
+      { durationMs: 1600, eventName: "frame.drift_left_parallax", id: "drift-left-parallax", key: "3", label: "Drift left", params: { curve: "easeInOutSine", deltaFovH: -3, deltaYaw: -8 } },
+      { durationMs: 620, eventName: "frame.impact_shake", id: "impact-shake", key: "4", label: "Impact shake", params: { amplitudePitch: 1.4, amplitudeYaw: 2.6, decay: 0.62, shakes: 4 } },
       { eventName: "highlight", id: "focus-box", key: "5", label: "Focus box" },
-      { eventName: "filter.vignette", id: "edge-vignette", key: "6", label: "Edge vignette" }
+      { eventName: "filter.vignette", id: "edge-vignette", key: "6", label: "Edge vignette" },
+      { durationMs: 1600, eventName: "frame.little_planet_pullback", id: "little-planet", key: "7", label: "Little planet", params: { peakAtMs: 560, peakFovH: 178, peakPitch: -88, peakSphereFov: 175, previewFlightHeight: 46.8, previewFov: 138, previewPitch: -90 } },
+      { durationMs: 1900, eventName: "frame.crystal_ball_pull", id: "crystal-ball", key: "8", label: "Crystal ball", params: { centerPitch: 88, peakAtMs: 760, peakSphereFov: 165, previewFlightHeight: 34, previewFov: 145, previewMaskFov: 178, previewMaskPitch: -78, previewPitch: -82, roll: 180 } },
+      { durationMs: 2200, eventName: "frame.look_around", id: "look-around", key: "9", label: "Look around", params: { returnYaw: -10, sweepYaw: 28, widenFovH: 3 } },
+      { durationMs: 1700, eventName: "frame.dolly_zoom", id: "dolly-zoom", key: "0", label: "Dolly zoom", params: { peakAtMs: 820, peakDeltaFovH: -18, previewDollyDistance: -6.5, previewFov: 64, previewMaskFovDelta: -18 } }
     ]
   },
   {
@@ -192,7 +196,7 @@ export function PcEffectsPanel() {
         return;
       }
 
-      if (!/^[1-6]$/.test(key)) {
+      if (!/^[0-9]$/.test(key)) {
         if (key === "escape" && shortcut.mode !== "hidden") {
           setShortcut({ mode: "hidden" });
           event.preventDefault();

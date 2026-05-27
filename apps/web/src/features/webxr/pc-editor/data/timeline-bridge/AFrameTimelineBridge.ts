@@ -108,6 +108,9 @@ export class AFrameTimelineBridge {
     this.tickTimer = window.setInterval(() => {
       void this.tick();
     }, this.tickIntervalMs);
+    if (this.viewTargetSource === "crop-mask") {
+      void this.forceSampleAndFlush("lock", undefined, undefined, { preserveUnchanged: true });
+    }
   }
 
   stop() {
@@ -311,7 +314,12 @@ export class AFrameTimelineBridge {
     await this.playbackReporter.maybeReport(video, this.viewState);
   }
 
-  private async forceSampleAndFlush(reason: TimelinePatchReason, event?: WebXrSemanticEvent, sampleTimeMs?: number | null) {
+  private async forceSampleAndFlush(
+    reason: TimelinePatchReason,
+    event?: WebXrSemanticEvent,
+    sampleTimeMs?: number | null,
+    options: { preserveUnchanged?: boolean } = {}
+  ) {
     if (event) {
       this.viewState = reduceViewTargetState(this.viewState, event);
     }
@@ -321,10 +329,15 @@ export class AFrameTimelineBridge {
       return;
     }
 
-    const videoTimeMs = typeof sampleTimeMs === "number" && Number.isFinite(sampleTimeMs)
+    const hasExplicitSampleTimeMs = typeof sampleTimeMs === "number" && Number.isFinite(sampleTimeMs);
+    const videoTimeMs = hasExplicitSampleTimeMs
       ? sampleTimeMs
       : video.currentTime * 1000;
-    const result = this.sampler.record(this.viewState, videoTimeMs, true);
+    const result = this.sampler.record(this.viewState, videoTimeMs, true, {
+      ensureAfterLastSample: !hasExplicitSampleTimeMs,
+      preserveUnchanged: options.preserveUnchanged,
+      skipUnchanged: true
+    });
     if (result.point) {
       this.pathQueue.addPoint(result.point);
       this.viewState = clearOneShotViewFlags(this.viewState);

@@ -1,0 +1,586 @@
+.root {
+  --player-void: #090014;
+  --player-panel: rgba(26, 16, 60, 0.58);
+  --player-panel-strong: rgba(8, 0, 24, 0.62);
+  --player-text: #e0e0e0;
+  --player-cyan: #00ffff;
+  --player-magenta: #ff00ff;
+  --player-orange: #ff9900;
+  --player-border: #2d1b4e;
+  position: fixed;
+  inset: 0;
+  background: #000;
+  overflow: hidden;
+}
+
+.xrStage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.uiOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.uiOverlay > * {
+  pointer-events: auto;
+}
+
+.root :global(.xr-session-player-ui) {
+  left: auto;
+  right: 50%;
+  width: min(82vw, 1080px);
+  transform: translateX(50%);
+}
+
+.root :global(.xr-session-player-ui .player-ui-main-controls) {
+  grid-template-columns: 42px 52px 42px minmax(96px, 1fr) minmax(102px, 112px) minmax(92px, 104px) minmax(102px, 112px) minmax(76px, 92px) 42px 42px;
+  gap: 6px;
+  justify-content: stretch;
+}
+
+.root :global(.xr-session-player-ui .player-ui-main-controls button) {
+  padding-right: 8px;
+  padding-left: 8px;
+}
+
+.root :global(.xr-session-player-ui .player-ui-main-controls .player-ui-icon-button) {
+  width: 42px;
+  min-width: 42px;
+}
+
+.root :global(.xr-session-player-ui .player-ui-main-controls .player-ui-primary-button) {
+  width: 52px;
+  min-width: 52px;
+}
+
+.root :global(.xr-session-player-ui .player-ui-title-block) {
+  padding-right: 4px;
+  padding-left: 4px;
+}
+
+.root :global(.xr-session-player-ui .player-ui-rate-button),
+.root :global(.xr-session-player-ui .player-ui-record-button) {
+  min-width: 0;
+}
+
+@media (max-width: 1120px) {
+  .root :global(.xr-session-player-ui .player-ui-main-controls) {
+    grid-template-columns: 40px 50px 40px minmax(0, 1fr) minmax(92px, 104px) minmax(84px, 96px) minmax(92px, 104px) minmax(68px, 84px) 40px 40px;
+    gap: 5px;
+  }
+
+}
+
+/* Player Controls */
+.playerControls {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 12px;
+  z-index: 20;
+  min-height: 78px;
+  padding: 12px 16px 14px;
+  border: 1px solid rgba(228, 236, 240, 0.18);
+  border-radius: 8px;
+  background: rgba(8, 10, 12, 0.74);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: #edf4f6;
+}
+
+.playerControls button {
+  min-height: 34px;
+  border: 1px solid rgba(228, 236, 240, 0.22);
+  border-radius: 7px;
+  background: rgba(228, 236, 240, 0.08);
+  color: #edf4f6;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.playerControls button:hover,
+.playerControls button:focus-visible {
+  background: rgba(228, 236, 240, 0.16);
+  border-color: rgba(228, 236, 240, 0.32);
+  outline: none;
+}
+
+.playerControls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+/* Editor Workbench */
+.editorWorkbench {
+  position: absolute;
+  right: 18px;
+  top: 86px;
+  bottom: 150px;
+  z-index: 5;
+  display: grid;
+  width: min(340px, calc(100vw - 36px));
+  overflow: auto;
+  border: 2px solid rgba(255, 0, 255, 0.68);
+  border-bottom-color: rgba(0, 255, 255, 0.72);
+  border-radius: 2px;
+  background:
+    linear-gradient(238deg, rgba(255, 255, 255, 0.12), transparent 22%, rgba(0, 255, 255, 0.07) 58%, transparent),
+    linear-gradient(215deg, rgba(26, 16, 60, 0.86), rgba(8, 0, 24, 0.82));
+  box-shadow:
+    0 22px 62px rgba(0, 0, 0, 0.52),
+    0 0 28px rgba(255, 0, 255, 0.2),
+    0 0 34px rgba(0, 255, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #edf4f6;
+  font-size: 13px;
+  line-height: 1.35;
+  backdrop-filter: blur(20px) saturate(1.28);
+}
+
+.editorWorkbench::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(260deg, transparent 0%, rgba(255, 255, 255, 0.18) 14%, transparent 30%),
+    repeating-linear-gradient(to bottom, transparent 0, transparent 5px, rgba(255, 255, 255, 0.035) 6px);
+  opacity: 0.34;
+}
+
+.editorWorkbench::after {
+  position: absolute;
+  inset: 5px;
+  pointer-events: none;
+  content: "";
+  border: 1px solid rgba(0, 255, 255, 0.24);
+  border-radius: 1px;
+}
+
+.workbenchHeader {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 10px;
+  padding: 11px 12px 10px;
+  border-bottom: 1px solid rgba(255, 0, 255, 0.54);
+  background:
+    linear-gradient(90deg, rgba(255, 0, 255, 0.12), rgba(0, 255, 255, 0.08)),
+    rgba(9, 0, 20, 0.54);
+}
+
+.workbenchBody {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.workbenchBody button {
+  min-height: 42px;
+  border: 1px solid rgba(255, 0, 255, 0.46);
+  border-radius: 2px;
+  background: rgba(12, 2, 30, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 0 18px rgba(255, 0, 255, 0.1);
+  color: #e0e0e0;
+  font: 800 11px/1 "Share Tech Mono", Consolas, monospace;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.workbenchBody button:hover,
+.workbenchBody button:focus-visible {
+  color: #070011;
+  background: var(--player-magenta);
+  border-color: var(--player-magenta);
+  box-shadow: 0 0 22px rgba(255, 0, 255, 0.44);
+  outline: none;
+}
+
+/* XR HUD */
+.xrHud {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 20px));
+  padding: 8px 10px;
+  border: 1px solid rgba(228, 236, 240, 0.18);
+  border-radius: 8px;
+  background: rgba(8, 10, 12, 0.78);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: #edf4f6;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.xrHud button {
+  min-height: 30px;
+  border: 1px solid rgba(0, 255, 255, 0.48);
+  border-radius: 6px;
+  background: rgba(0, 255, 255, 0.12);
+  color: var(--player-cyan);
+  font: 800 12px/1 "Share Tech Mono", Consolas, monospace;
+  cursor: pointer;
+}
+
+.xrHud button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.stereoDebugView {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.stereoDebugView > div {
+  border: 1px solid rgba(0, 255, 255, 0.34);
+  background:
+    radial-gradient(circle at 50% 42%, rgba(0, 255, 255, 0.08), transparent 32%),
+    linear-gradient(90deg, rgba(255, 0, 255, 0.08), rgba(0, 0, 0, 0.04), rgba(0, 255, 255, 0.08));
+}
+
+/* Responsive */
+@media (max-width: 700px) {
+  .playerControls {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .editorWorkbench {
+    top: 88px;
+    right: 12px;
+    bottom: 150px;
+    width: min(300px, calc(100vw - 24px));
+  }
+
+  .xrHud {
+    left: 12px;
+    top: 10px;
+    max-width: calc(100vw - 24px);
+  }
+
+  .root :global(.xr-session-player-ui) {
+    left: 12px;
+    right: 12px;
+    bottom: 122px;
+  }
+
+  .root :global(.xr-session-player-playlist) {
+    left: 12px;
+    right: 12px;
+  }
+
+  .root :global(.xr-session-player-ui .player-ui-main-controls) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    justify-content: stretch;
+  }
+
+  .root :global(.xr-session-player-ui .player-ui-title-block) {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    max-width: none;
+  }
+
+  .root :global(.xr-session-player-ui .player-ui-main-controls .player-ui-icon-button),
+  .root :global(.xr-session-player-ui .player-ui-main-controls .player-ui-primary-button) {
+    width: auto;
+    min-width: 0;
+  }
+}
+
+/* Effects Panel */
+.effectsPanel {
+  position: absolute;
+  right: 18px;
+  top: 86px;
+  bottom: 150px;
+  z-index: 6;
+  width: min(340px, calc(100vw - 36px));
+  overflow: auto;
+  border: 2px solid rgba(255, 0, 255, 0.68);
+  border-bottom-color: rgba(0, 255, 255, 0.72);
+  border-radius: 2px;
+  background:
+    linear-gradient(238deg, rgba(255, 255, 255, 0.12), transparent 22%, rgba(0, 255, 255, 0.07) 58%, transparent),
+    linear-gradient(215deg, rgba(26, 16, 60, 0.86), rgba(8, 0, 24, 0.82));
+  box-shadow:
+    0 22px 62px rgba(0, 0, 0, 0.52),
+    0 0 28px rgba(255, 0, 255, 0.2),
+    0 0 34px rgba(0, 255, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #edf4f6;
+  font-size: 13px;
+  line-height: 1.35;
+  backdrop-filter: blur(20px) saturate(1.28);
+  transition: transform 0.28s ease;
+}
+
+.effectsPanel.collapsed {
+  transform: translateX(calc(100% + 18px));
+}
+
+.effectsPanel::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(260deg, transparent 0%, rgba(255, 255, 255, 0.18) 14%, transparent 30%),
+    repeating-linear-gradient(to bottom, transparent 0, transparent 5px, rgba(255, 255, 255, 0.035) 6px);
+  opacity: 0.34;
+}
+
+.effectsPanel::after {
+  position: absolute;
+  inset: 5px;
+  pointer-events: none;
+  content: "";
+  border: 1px solid rgba(0, 255, 255, 0.24);
+  border-radius: 1px;
+}
+
+.effectsHeader {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px 10px;
+  border-bottom: 1px solid rgba(255, 0, 255, 0.54);
+  background:
+    linear-gradient(90deg, rgba(255, 0, 255, 0.12), rgba(0, 255, 255, 0.08)),
+    rgba(9, 0, 20, 0.54);
+}
+
+.effectsToggle {
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid rgba(255, 0, 255, 0.46);
+  border-radius: 2px;
+  background: rgba(12, 2, 30, 0.72);
+  color: var(--player-magenta);
+  font: 800 14px/1 "Share Tech Mono", Consolas, monospace;
+  cursor: pointer;
+}
+
+.effectsToggle:hover {
+  background: rgba(255, 0, 255, 0.18);
+  box-shadow: 0 0 18px rgba(255, 0, 255, 0.24);
+}
+
+.effectsBody {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.effectCategory {
+  border: 1px solid rgba(255, 0, 255, 0.28);
+  border-radius: 2px;
+  background: rgba(9, 0, 20, 0.42);
+}
+
+.effectCategory[data-active="true"] {
+  border-color: rgba(0, 255, 255, 0.62);
+  box-shadow: 0 0 18px rgba(0, 255, 255, 0.18);
+}
+
+.effectCategoryButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: #e0e0e0;
+  font: 800 11px/1 "Share Tech Mono", Consolas, monospace;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.effectCategoryButton:hover {
+  color: var(--player-cyan);
+}
+
+.effectKey {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  min-height: 20px;
+  border: 1px solid rgba(255, 0, 255, 0.46);
+  border-radius: 2px;
+  background: rgba(12, 2, 30, 0.72);
+  color: var(--player-magenta);
+  font: 800 10px/1 "Share Tech Mono", Consolas, monospace;
+}
+
+.effectGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  padding: 8px;
+}
+
+.effectTile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 72px;
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 0, 255, 0.36);
+  border-radius: 2px;
+  background: rgba(12, 2, 30, 0.62);
+  color: #e0e0e0;
+  font: 700 10px/1.2 "Share Tech Mono", Consolas, monospace;
+  text-align: center;
+  cursor: pointer;
+}
+
+.effectTile:hover {
+  border-color: var(--player-cyan);
+  background: rgba(0, 255, 255, 0.08);
+  box-shadow: 0 0 14px rgba(0, 255, 255, 0.18);
+}
+
+.effectTile.active {
+  border-color: var(--player-magenta);
+  background: rgba(255, 0, 255, 0.12);
+  box-shadow: 0 0 18px rgba(255, 0, 255, 0.28);
+  color: var(--player-magenta);
+}
+
+.effectBadge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  min-height: 18px;
+  border: 1px solid rgba(255, 0, 255, 0.46);
+  border-radius: 2px;
+  background: rgba(12, 2, 30, 0.82);
+  color: var(--player-magenta);
+  font: 800 9px/1 "Share Tech Mono", Consolas, monospace;
+}
+
+.effectIcon {
+  width: 24px;
+  height: 24px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.62;
+}
+
+.effectShortcutOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.effectShortcutCard {
+  min-width: 420px;
+  max-width: 90vw;
+  padding: 18px 20px;
+  border: 2px solid rgba(255, 0, 255, 0.68);
+  border-bottom-color: rgba(0, 255, 255, 0.72);
+  border-radius: 2px;
+  background:
+    linear-gradient(238deg, rgba(255, 255, 255, 0.12), transparent 22%, rgba(0, 255, 255, 0.07) 58%, transparent),
+    linear-gradient(215deg, rgba(26, 16, 60, 0.92), rgba(8, 0, 24, 0.88));
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.62),
+    0 0 32px rgba(255, 0, 255, 0.24),
+    0 0 38px rgba(0, 255, 255, 0.18);
+  color: #edf4f6;
+}
+
+.effectShortcutGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.effectShortcutTile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(255, 0, 255, 0.46);
+  border-radius: 2px;
+  background: rgba(12, 2, 30, 0.72);
+  font: 700 10px/1.2 "Share Tech Mono", Consolas, monospace;
+  text-align: center;
+}
+
+.workbenchChrome {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.dotMagenta {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--player-magenta);
+  box-shadow: 0 0 8px var(--player-magenta);
+}
+
+.dotCyan {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--player-cyan);
+  box-shadow: 0 0 8px var(--player-cyan);
+}
+
+.dotOrange {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--player-orange);
+  box-shadow: 0 0 8px var(--player-orange);
+}
+
+.workbenchKicker {
+  margin: 0 0 4px;
+  color: var(--player-cyan);
+  font: 700 9px/1 "Share Tech Mono", Consolas, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.72;
+}

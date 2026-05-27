@@ -6,8 +6,10 @@ The current product WebXR surface is now:
 
 ```text
 apps/web/src/features/webxr/pc-editor/
-/xr/videos/:videoId/session/:sessionId
+/xr/player
 ```
+
+`/xr/videos/:videoId/session/:sessionId` remains as a transitional deep link for explicit-session tests and debugging.
 
 Keep these components for dev/legacy routes and smoke coverage:
 

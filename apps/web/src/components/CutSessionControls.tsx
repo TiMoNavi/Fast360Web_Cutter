@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createCutSession } from "@/lib/api";
+import { createCutSession, switchWebXrPlayerSession } from "@/lib/api";
 
 type CutSessionControlsProps = {
   videoId: string;
@@ -22,9 +22,7 @@ export function CutSessionControls({ videoId }: CutSessionControlsProps) {
   const [message, setMessage] = useState("使用默认 ClipEditConfig 创建 WebXR session。");
   const [isCreating, setIsCreating] = useState(false);
 
-  const xrHref = `/xr/videos/${encodeURIComponent(videoId)}/session/${encodeURIComponent(
-    sessionId
-  )}`;
+  const xrHref = "/xr/player";
 
   async function createAndEnter() {
     setIsCreating(true);
@@ -37,6 +35,19 @@ export function CutSessionControls({ videoId }: CutSessionControlsProps) {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "创建 session 失败。");
     } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function enterActiveVideo() {
+    setIsCreating(true);
+    setMessage("正在切换 WebXR session...");
+
+    try {
+      await switchWebXrPlayerSession(videoId);
+      router.push(xrHref);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "进入 WebXR 失败。");
       setIsCreating(false);
     }
   }
@@ -60,9 +71,9 @@ export function CutSessionControls({ videoId }: CutSessionControlsProps) {
         >
           创建并进入 WebXR
         </button>
-        <a className="button" href={xrHref}>
+        <button className="button" disabled={isCreating} onClick={() => void enterActiveVideo()} type="button">
           直接进入
-        </a>
+        </button>
       </div>
       <p className="muted">{message}</p>
     </div>

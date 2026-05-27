@@ -55,6 +55,7 @@ GET  /api/cut-sessions/:sessionId
 PUT  /api/cut-sessions/:sessionId/config
 POST /api/cut-sessions/:sessionId/abandon
 GET  /api/cut-sessions/:sessionId/status
+GET  /api/cut-sessions/:sessionId/segment-renders
 ```
 
 `POST /api/cut-sessions`：
@@ -73,6 +74,44 @@ GET  /api/cut-sessions/:sessionId/status
 尚未级联取消生产队列，因为队列还没有实现。
 ```
 
+## WebXR Player Session
+
+```text
+GET /api/xr/player-session
+PUT /api/xr/player-session
+```
+
+`GET /api/xr/player-session` 当前：
+
+```text
+必须登录。
+读取 webxr_player_state.active_session_id。
+如果 active session 有效，返回它。
+如果 active session 缺失或已 abandoned，回退到当前用户最近更新的可用 WebXR session。
+如果没有可用 session，但有 360/equirectangular 视频，创建一个默认 cut session 并设为 active。
+返回 sessionId、videoId、status、timelineRevision、xrPath=/xr/player、latestExport、music。
+```
+
+`PUT /api/xr/player-session` 当前：
+
+```json
+{
+  "videoId": "video_123"
+}
+```
+
+行为：
+
+```text
+校验视频属于当前用户，并且看起来是 WebXR 360 source。
+目标视频已有未 abandoned cut session 时恢复最近一个。
+没有 session 时为目标视频创建一个新 cut session。
+更新 webxr_player_state.active_video_id / active_session_id。
+返回新的 player session 摘要。
+```
+
+这个接口服务 `/xr/player` 的视频列表切换。它不把一个 cut session 反复改到不同视频上，而是按视频恢复/创建各自的 session，避免 path、effect、BGM 和 export 状态串到另一条视频。
+
 ## ViewPathPatch
 
 ```text
@@ -88,6 +127,7 @@ POST /api/cut-sessions/:sessionId/path-patches
 按 [replaceRange.startMs, replaceRange.endMs) 删除旧 view_path_points。
 写入当前 points。
 把受影响 minute_segments 标记 dirty。
+如果 patch.points 非空，当前代码还会尝试推动实验性的 30 秒 segment_renders。
 ```
 
 当前缺口：
@@ -97,6 +137,7 @@ POST /api/cut-sessions/:sessionId/path-patches
 还需要校验 points 全部落在 replaceRange 内。
 还需要定义 pathRevision 冲突策略。
 还需要限制每分钟点数。
+当前 segment_renders 不是生产队列，不能替代正式导出状态。
 ```
 
 ## EffectEventsPatch
@@ -253,6 +294,7 @@ render-test 不是生产导出 API。
 ```text
 GET /api/exports/:exportId
 GET /api/exports/:exportId/download
+GET /api/exports
 ```
 
 下载要求：

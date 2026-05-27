@@ -19,6 +19,9 @@ backend/video-library.md
 backend/webxr-bridge.md
 WebXR 桥接模块，接收用户从 WebXR 传回的时间点序列、取景路径和特效事件。
 
+backend/timeline-data.md
+Timeline 数据结构预期，定义 raw patch、ViewPathTimeline、TimelineBuildReport 和 RenderSlice 的边界。
+
 backend/video-cutting.md
 视频裁切模块，负责分片、渲染、重渲染和最终导出。
 
@@ -32,7 +35,8 @@ backend/module-boundaries.md
 认证模块只处理用户和登录态。
 上传下载模块只处理文件进入和文件流出。
 视频列表模块只处理 videos 元数据和可见性。
-WebXR 桥接模块只处理路径、时间点序列和特效事件的协议接收。
+WebXR 桥接模块只处理 `/xr/player` active session、路径、时间点序列和特效事件的协议接收。
+Timeline assembler 只处理 patch 到 ViewPathTimeline 的编译，不处理 HTTP、用户鉴权或视频编码。
 视频裁切模块只处理可渲染时间线、分片队列和导出。
 ```
 

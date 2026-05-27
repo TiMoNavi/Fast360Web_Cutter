@@ -17,6 +17,7 @@ build/
 .env.local
 .logs/
 logs/
+backups/
 *.log
 *.err.log
 *.out.log
@@ -35,6 +36,8 @@ apps/web/test-results/
 
 # Local HTTPS certificates and private keys
 apps/web/certificates/
+public-tunnel/tunnel.env
+public-tunnel/generated/
 *.pem
 *.key
 *.crt

@@ -16,6 +16,15 @@ async function readViewTarget(page: Page) {
   return parseViewTarget(await page.getByTestId("three-official-view-target").textContent());
 }
 
+async function readFov(page: Page) {
+  const text = await page.getByTestId("three-official-view-target").textContent();
+  const match = text?.match(/FOV\s+(-?\d+(?:\.\d+)?)/);
+  if (!match) {
+    throw new Error(`Unable to parse FOV text: ${text ?? ""}`);
+  }
+  return Number(match[1]);
+}
+
 async function readMaskOpacity(page: Page) {
   const text = await page.getByTestId("three-official-mask-opacity").textContent();
   const match = text?.match(/mask opacity:\s+(-?\d+(?:\.\d+)?)/);
@@ -327,6 +336,35 @@ test("three official lab supports B hold release quick menu selection", async ({
   expect(pageErrors).toEqual([]);
 });
 
+test("three official lab closes B quick menu release without selection", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  const response = await page.goto("/xr/three-official-interactive-lab");
+  expect(response?.status()).toBeLessThan(400);
+  await expect(page.getByTestId("three-official-canvas")).toBeVisible();
+  await expectCanvasHasRenderedPixels(page);
+
+  await page.evaluate(() => {
+    const pressPoint = { x: 0, y: 1.58, z: -0.55 };
+    const outsidePoint = { x: 0.45, y: 1.58, z: -0.55 };
+    window.dispatchEvent(new CustomEvent("three-official-quick-menu", { detail: { phase: "press", pointerPosition: pressPoint } }));
+    window.dispatchEvent(new CustomEvent("three-official-quick-menu", { detail: { phase: "aim", pointerPosition: outsidePoint } }));
+  });
+
+  await expect(page.getByTestId("three-official-quick-menu-status")).toContainText("open");
+  await expect(page.getByTestId("three-official-quick-menu-status")).toContainText("none");
+
+  await page.evaluate(() => {
+    const outsidePoint = { x: 0.45, y: 1.58, z: -0.55 };
+    window.dispatchEvent(new CustomEvent("three-official-quick-menu", { detail: { phase: "release", pointerPosition: outsidePoint } }));
+  });
+
+  await expect(page.getByTestId("three-official-quick-menu-status")).toContainText("closed");
+  await expect(page.getByTestId("three-official-last-action")).toContainText("closed without selection");
+  expect(pageErrors).toEqual([]);
+});
+
 test("three official lab quick menu selects by moving the controller point into an anchored tile", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -353,6 +391,50 @@ test("three official lab quick menu selects by moving the controller point into 
 
   await expect(page.getByTestId("three-official-quick-menu-status")).toContainText("closed");
   await expect(page.getByTestId("three-official-workflow-status")).toContainText("RECORDING");
+  expect(pageErrors).toEqual([]);
+});
+
+test("three official lab maps long trigger hold to head gaze follow and release commit", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  const response = await page.goto("/xr/three-official-interactive-lab");
+  expect(response?.status()).toBeLessThan(400);
+
+  await expect(page.getByTestId("three-official-interactive-lab")).toBeVisible();
+  await expect(page.getByTestId("three-official-canvas")).toBeVisible();
+  await expectCanvasHasRenderedPixels(page);
+
+  await page.evaluate(() => {
+    const rayOrigin = { x: 0, y: 1.58, z: 0.45 };
+    const rayDirection = { x: 0.95, y: -0.08, z: -1 };
+    window.dispatchEvent(new CustomEvent("three-official-controller-select", { detail: { hand: "right", instant: true, phase: "start", rayDirection, rayOrigin } }));
+    window.dispatchEvent(new CustomEvent("three-official-controller-select", { detail: { hand: "right", instant: true, phase: "end", rayDirection, rayOrigin } }));
+  });
+
+  await expect(page.getByTestId("three-official-last-action")).toContainText("TRIGGER RAY SNAP RIGHT");
+  const moved = await readViewTarget(page);
+  expect(Math.abs(moved.yaw)).toBeGreaterThan(8);
+
+  await page.evaluate(() => {
+    const rayOrigin = { x: 0, y: 1.58, z: 0.45 };
+    const rayDirection = { x: -0.45, y: 0, z: -1 };
+    window.dispatchEvent(new CustomEvent("three-official-controller-select", { detail: { hand: "right", phase: "start", rayDirection, rayOrigin } }));
+  });
+
+  await expect(page.getByTestId("three-official-mode-strip")).toContainText("HEAD GAZE");
+
+  await page.evaluate(() => {
+    const rayOrigin = { x: 0, y: 1.58, z: 0.45 };
+    const rayDirection = { x: -0.45, y: 0, z: -1 };
+    window.dispatchEvent(new CustomEvent("three-official-controller-select", { detail: { hand: "right", phase: "end", rayDirection, rayOrigin } }));
+  });
+
+  await expect(page.getByTestId("three-official-last-action")).toContainText("TRIGGER RELEASE");
+  await expect(page.getByTestId("three-official-mode-strip")).toContainText("LOCKED");
+  await expect(page.getByTestId("three-official-last-semantic")).toContainText("flushPath reason=lock");
+  const committed = await readViewTarget(page);
+  expect(Math.abs(committed.yaw)).toBeLessThan(2);
   expect(pageErrors).toEqual([]);
 });
 
@@ -485,6 +567,40 @@ test("three official lab maps right thumbstick hold to smooth FOV changes", asyn
   expect(pageErrors).toEqual([]);
 });
 
+test("three official lab clamps right thumbstick FOV changes to shared crop range", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  const response = await page.goto("/xr/three-official-interactive-lab");
+  expect(response?.status()).toBeLessThan(400);
+
+  await expect(page.getByTestId("three-official-interactive-lab")).toBeVisible();
+  await expect(page.getByTestId("three-official-canvas")).toBeVisible();
+  await expectCanvasHasRenderedPixels(page);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent("three-official-thumbstick", { detail: { hand: "right", y: 1 } }));
+  });
+  await expect.poll(async () => await readFov(page), { timeout: 4000 }).toBe(110);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent("three-official-thumbstick", { detail: { hand: "right", y: 0 } }));
+  });
+  await expect(page.getByTestId("three-official-last-action")).toContainText("RIGHT STICK RELEASE");
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent("three-official-thumbstick", { detail: { hand: "right", y: -1 } }));
+  });
+  await expect(page.getByTestId("three-official-last-action")).toContainText("FOV in");
+  await expect.poll(async () => await readFov(page), { timeout: 5000 }).toBe(35);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent("three-official-thumbstick", { detail: { hand: "right", y: 0 } }));
+  });
+  await expect(page.getByTestId("three-official-last-semantic")).toContainText("flushPath reason=fov");
+  expect(pageErrors).toEqual([]);
+});
+
 test("three official lab maps left grip plus right thumbstick to mask opacity", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -514,5 +630,22 @@ test("three official lab maps left grip plus right thumbstick to mask opacity", 
 
   await expect(page.getByTestId("three-official-mask-opacity")).toContainText("left grip modifier off");
   await expect(page.getByTestId("three-official-last-action")).toContainText("LEFT GRIP RELEASE");
+
+  const increasedOpacity = await readMaskOpacity(page);
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent("three-official-controller-squeeze", { detail: { hand: "left", phase: "start" } }));
+    window.dispatchEvent(new CustomEvent("three-official-thumbstick", { detail: { hand: "right", y: -1 } }));
+  });
+
+  await expect(page.getByTestId("three-official-last-action")).toContainText("LEFT GRIP + RIGHT STICK");
+  await expect(page.getByTestId("three-official-mode-strip")).toContainText("OPACITY");
+  await expect.poll(async () => await readMaskOpacity(page)).toBeLessThan(increasedOpacity);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent("three-official-thumbstick", { detail: { hand: "right", y: 0 } }));
+    window.dispatchEvent(new CustomEvent("three-official-controller-squeeze", { detail: { hand: "left", phase: "end" } }));
+  });
+
+  await expect(page.getByTestId("three-official-mask-opacity")).toContainText("left grip modifier off");
   expect(pageErrors).toEqual([]);
 });

@@ -21,7 +21,7 @@ import { usePcWheelZoom } from "./inputs/usePcWheelZoom";
 import { createPcCameraOperations } from "./operations/cameraOperations";
 import { createPcMaskOperations } from "./operations/maskOperations";
 import { createPcPlaybackOperations } from "./operations/playbackOperations";
-import { PC_EDITOR_RATE_DEFAULT, type PcRateWheelTarget } from "./operations/rateCurve";
+import { PC_EDITOR_RATE_DEFAULT, rateFromAdaptiveWheel, type PcRateWheelTarget } from "./operations/rateCurve";
 import { createPcRecordingOperations } from "./operations/recordingOperations";
 import { createPcTimelineOperations, type PcTimelineStatusSource } from "./operations/timelineOperations";
 
@@ -69,6 +69,7 @@ export function usePcEditorControls({
   const [maskDragging, setMaskDragging] = useState(false);
   const [rateWheelTarget, setRateWheelTarget] = useState<PcRateWheelTarget>(null);
   const rateWheelTargetRef = useRef<PcRateWheelTarget>(null);
+  const [effectSpeed, setEffectSpeed] = useState(PC_EDITOR_RATE_DEFAULT);
   const [recordingRate, setRecordingRate] = useState(PC_EDITOR_RATE_DEFAULT);
   const setActiveRateWheelTarget = useCallback((target: PcRateWheelTarget) => {
     rateWheelTargetRef.current = target;
@@ -121,10 +122,17 @@ export function usePcEditorControls({
   const recording = useMemo(() => createPcRecordingOperations({
     setRecordingRate
   }), []);
+  const adjustEffectSpeedByWheel = useCallback((deltaY: number) => {
+    setEffectSpeed((speed) => rateFromAdaptiveWheel(speed, deltaY));
+  }, []);
+  const resetEffectSpeed = useCallback(() => {
+    setEffectSpeed(PC_EDITOR_RATE_DEFAULT);
+  }, []);
 
   const handleStageWheel = usePcWheelZoom({
     mask,
     maskOpacity: cropMaskState.maskOpacity,
+    onEffectSpeedWheel: adjustEffectSpeedByWheel,
     pcWorkbench,
     playback,
     rateWheelTarget,
@@ -199,6 +207,7 @@ export function usePcEditorControls({
     discardNotice,
     domPlaylistOpen,
     edgePanActive: edgePan.edgePanActive,
+    effectSpeed,
     flushTimeline: timeline.flushTimeline,
     handleMaskPointerDown: pointerInput.handleMaskPointerDown,
     handleMaskPointerLeave: pointerInput.handleMaskPointerLeave,
@@ -212,6 +221,7 @@ export function usePcEditorControls({
     recordingRate,
     pauseSampling: timeline.pauseSampling,
     resetPlaybackRate: playback.resetPlaybackRate,
+    resetEffectSpeed,
     resetRecordingRate: recording.resetRecordingRate,
     resumeSampling: timeline.resumeSampling,
     selectSource: playback.selectSource,

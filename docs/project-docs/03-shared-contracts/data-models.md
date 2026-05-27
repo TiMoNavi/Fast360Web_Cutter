@@ -8,6 +8,7 @@
 User / AuthSession
 Video
 CutSession
+WebXrPlayerState
 ClipEditConfig
 ViewPathPatch
 ViewPathPoint
@@ -70,6 +71,34 @@ PlaybackClientState
 ```text
 03-shared-contracts/view-path-timeline-file.md
 ```
+
+## CutSession / WebXrPlayerState
+
+`CutSession` 是一个视频的一次剪辑工作区。它不应该在多个视频之间来回复用；不同视频应拥有各自的 session、path、effect、BGM 和 export 状态。
+
+当前核心字段：
+
+```text
+id
+video_id
+user_id
+status
+timeline_revision
+created_at
+updated_at
+```
+
+`WebXrPlayerState` 是 `/xr/player` 的当前选择状态，不是剪辑数据本身：
+
+```text
+user_id
+active_video_id
+active_session_id
+created_at
+updated_at
+```
+
+它用于稳定产品路由 `/xr/player`：页面 URL 不携带 `videoId/sessionId`，后端通过 active state 恢复当前 session。用户从视频列表切换素材时，应更新 `active_video_id / active_session_id`，而不是把当前 cut session 改写到另一个视频。
 
 ## ClipEditConfig
 
@@ -273,7 +302,7 @@ overlay.letterbox
 overlay.text
 ```
 
-目标形态还应支持用户自定义名称：
+当前协议已经支持自由事件名：
 
 ```text
 startMs
@@ -308,7 +337,7 @@ custom.customer_event
 
 `eventName` / `type` 是稳定机器名，不要放中文展示文案；`displayName` 或 `params.label` 可以放中文。未知事件名不应破坏 timeline 解析，应按 `renderPolicy.fallback = ignore / warn / fail` 处理。
 
-它和 ViewPathPoint 是两条时间线。正式导出可以同时读取二者，但不应把效果状态混进取景路径。第一版可以先保存自定义名称和时间范围，不要求渲染器立即实现对应视觉效果。
+它和 ViewPathPoint 是两条时间线。正式导出可以同时读取二者，但不应把效果状态混进取景路径。当前可以先保存自定义名称和时间范围，不要求渲染器立即实现对应视觉效果；未知事件名应按 `renderPolicy.fallback` 处理。
 
 ## MinuteSegment
 

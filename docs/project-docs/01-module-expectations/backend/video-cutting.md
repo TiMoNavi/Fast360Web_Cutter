@@ -37,6 +37,12 @@ minuteIndex = floor(outputMs / 60000)
 
 分片应基于最终成片时间 `outputMs`，再通过 `ViewPathTimeline.editSegments` 找到对应的源视频区间。一个 output 分片可能跨多个 source segment，因此 video cutting 应先向 timeline assembler 请求更小的 `RenderSlice[]`。
 
+Timeline 数据结构和 RenderSlice 的上游边界见：
+
+```text
+timeline-data.md
+```
+
 目标状态：
 
 ```text

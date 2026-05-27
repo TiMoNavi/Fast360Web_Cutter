@@ -24,10 +24,10 @@
 5. 后端保存视频到 storage/videos，并写入 videos。
 6. 用户进入 /mobile/videos/:videoId。
 7. 页面创建 cut session，保存默认 ClipEditConfig。
-8. 用户进入 /xr/videos/:videoId/session/:sessionId。
-9. 当前页面通过 FixedOrbitRenderButton 生成测试 ViewPathPatch。
+8. 用户进入 /xr/player，或通过当前兼容深链 /xr/videos/:videoId/session/:sessionId 打开明确 session。
+9. PC WebXR Editor 通过 crop mask、键鼠、工作台和 timeline bridge 生成 ViewPathPatch。
 10. 后端保存 patch，并按 replaceRange 写入 view_path_points。
-11. 页面调用 render-test。
+11. 页面调用 render-test，可选读取 effect events 和 BGM。
 12. 后端读取源视频和路径点，逐帧 remap，生成 export MP4。
 13. 用户回到移动端详情页或 export 页下载结果。
 ```
@@ -57,9 +57,8 @@ export 能被下载。
 真实 Quest 取景体验。
 真实头显姿态采样。
 controller 快捷操作。
-取景框和遮罩。
-5Hz sampler 的真实运行。
-真实业务 session 页播放上传视频。
+/xr/player active session 恢复。
+生产形态的 5Hz sampler / batch 策略。
 长视频 60 秒分片。
 队列和 worker。
 dirty 重渲染。
@@ -68,7 +67,7 @@ dirty 重渲染。
 
 ## 当前测试路径
 
-当前 WebXR 业务页使用测试按钮生成路径：
+当前 WebXR 业务页已经使用 PC crop mask 和 timeline bridge 生成路径；历史 FixedOrbit 测试路径只作为兼容验证保留：
 
 ```text
 固定环绕测试：

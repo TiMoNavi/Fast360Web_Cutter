@@ -97,11 +97,19 @@ class EffectEventsPatch(BaseModel):
     events: list[EffectEvent]
 
 
+class RenderTestRequest(BaseModel):
+    loop_source: bool = Field(default=False, alias="loopSource")
+
+
 class SessionMusicConfig(BaseModel):
     music_id: str | None = Field(default=None, alias="musicId")
     enabled: bool = True
     start_ms: int = Field(default=0, alias="startMs")
     gain_db: float = Field(default=-10.0, alias="gainDb")
+
+
+class WebXrPlayerSessionSwitch(BaseModel):
+    video_id: str = Field(alias="videoId")
 
 
 class PlaybackPreviewState(BaseModel):

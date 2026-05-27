@@ -65,8 +65,8 @@ ThreeOfficialPlayerPanel
 | 上一个 / 下一个视频 | PC 播放条 prev/next | playback rail `PREV` / `NEXT` | Proposed：`B hold + stick left/right` 在播放菜单页切换 | Partial：当前只切本地 `videoIndex` | 还没有 timeline semantic；如果只切 3D 播放源，本地即可 |
 | 来源列表选择 | PC playlist `P` + item | playback rail 前两条 source button | Proposed：放在主桌面 `SESSION` 或 playback rail source list | Partial：本地 source index | PC 有完整 playlist；Three 目前是简化 source list |
 | 打开 / 关闭 playlist | `P` | playback rail `SELECT_SOURCE` 列表常驻简化版 | Proposed：主桌面 `SESSION` 模块 | UI Only | three-official 不需要照搬 DOM 弹层，可以做空间小列表 |
-| 播放速率 | `,` / `.`，或 `T + wheel` | playback rail `0.5x / 1x / 2x` | Proposed：`right grip + right stick up/down` 或 quick menu 第二页 | Partial：只改 video.playbackRate | 当前没有独立 semantic event，PC 端也主要是 playback controller 状态 |
-| 录制速率 | `R + wheel` | playback rail `Rec - / Rec reset / Rec +` | Proposed：`left grip + B` 打开 workflow page 后用 stick 调整 | Partial：本地 recordingRate | 录制路径采样目前不真正按 recordingRate 重采样 |
+| 播放速率 | `Z + wheel` | playback rail `0.5x / 1x / 2x` | Proposed：`right grip + right stick up/down` 或 quick menu 第二页 | Partial：只改 video.playbackRate | 当前没有独立 semantic event，PC 端也主要是 playback controller 状态 |
+| 录制速率 | `X + wheel` | playback rail `Rec - / Rec reset / Rec +` | Proposed：`left grip + B` 打开 workflow page 后用 stick 调整 | Partial：本地 recordingRate | 录制路径采样目前不真正按 recordingRate 重采样 |
 | 隐藏 / 恢复播放 UI | PC close overlays / options | playback rail `DIM / RESTORE` | Proposed：`B + menu button` 或放在 HUD | UI Only | 只影响空间 UI 强弱，不进入 timeline |
 
 ## 取景、视角与 FOV
@@ -95,7 +95,7 @@ ThreeOfficialPlayerPanel
 
 | PC editor 操作 | PC 入口 | Three official 入口 | 手柄方案 | Timeline / 合成状态 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| Cut here | `C` / workbench Cut | 主桌面大 `CUT`，quick menu `CUT` | OK：B quick menu 选 `CUT` | OK：`cutHere` | 高频操作，建议未来也绑定到 A button，如果浏览器稳定暴露 |
+| Cut here | workbench Cut 按钮 | 主桌面大 `CUT`，quick menu `CUT` | OK：B quick menu 选 `CUT` | OK：`cutHere` | 键盘 `C` 已释放给视效倍速，Cut 走 UI / VR 入口 |
 | Discard range | 长按 `Delete` 开始，松开结束 | 主桌面 `DISCARD` 保留低频按钮 | OK：left grip + right trigger hold 开始，松开 right trigger 或 left grip 结束 | OK：开始 `discardRange startMs`，结束 `restoreRange startMs/endMs` + `flushPath discard` | 已改成直接手柄按键，不需要先打开 UI |
 | Restore range | workbench restore / marker | 主桌面 `RESTORE` | Proposed：`left grip + B` quick menu 第二页 `RESTORE` | Partial：当前按钮派发 `restoreRange` + `flushPath restore`，无时间参数 | 适合低频入口，不必占主手柄快捷 |
 | Start crop recording | workbench Start crop，播放条 Record | playback rail `START REC`，主桌面 workflow，quick menu `START` | OK：B quick menu `START` | OK：`samplingResume`，并记录本地 sample | 高频工作流入口，也可放主桌面醒目按钮 |
@@ -180,7 +180,7 @@ UNDO       VHS
 
 | 物理键 | 建议用途 | 说明 |
 | --- | --- | --- |
-| A | Cut here | 超高频，PC `C` 的最佳替代 |
+| A | Cut here | 超高频，PC 端当前由 workbench Cut 按钮承载 |
 | X | Lock / unlock | 左手确认类操作 |
 | Y | Restore 或 open module | 低频恢复/菜单 |
 | B | Quick menu | 当前已经使用，继续作为 radial/menu 入口 |

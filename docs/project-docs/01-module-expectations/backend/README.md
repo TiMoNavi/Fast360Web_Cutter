@@ -13,7 +13,10 @@ video-library.md
 视频列表与元数据模块。
 
 webxr-bridge.md
-WebXR 桥接模块，接收用户从 WebXR 传回的时间点序列。
+WebXR 桥接模块，维护 /xr/player active session，并接收用户从 WebXR 传回的时间点序列、取景路径和特效事件。
+
+timeline-data.md
+Timeline 数据结构预期，说明 patch、ViewPathTimeline、build report 和 render slice 的理想边界。
 
 video-cutting.md
 视频裁切模块。

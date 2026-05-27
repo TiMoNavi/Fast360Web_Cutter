@@ -1,18 +1,60 @@
 # PC WebXR Editor
 
-`/xr/videos/:videoId/session/:sessionId` is the product PC WebXR Editor surface. Keep the URL stable; organize the implementation here.
+`/xr/player` is the target product PC WebXR Editor surface. Keep the product URL stable and organize the implementation here.
+
+Product flows should open `/xr/player`. When a user opens a specific video from a card or detail page, switch the backend active session to that video first, then let the in-page playlist/current source select the matching video.
+
+`/xr/videos/:videoId/session/:sessionId` still exists only as a transitional deep link for explicit-session debugging and limited E2E coverage. Do not build new product assumptions around that path shape; move video/session context into the player data model or backend active-session state instead.
+
+`/xr/player` uses `/api/xr/player-session` to restore the active session. Video switching should restore or create the selected video's own session, then update the editor's active timeline IDs.
 
 ## Layers
 
 ```text
 pc-editor/
-  data/      session model, video source mapping, timeline bridge transport
+  data/      player/session model, video source mapping, timeline bridge transport
   webxr/     A-Frame runtime, scene, videosphere, crop mask, Meta XR compatibility
   ui/        2D screen-space player UI, workbench, opacity controls, debug state
   controls/  semantic editor operations plus PC input adapters
 ```
 
-`PcWebXrEditor.tsx` should remain the top-level composition point. Do not add new interaction logic directly to it.
+Current clarity check:
+
+```text
+Clear:
+  data/ owns initial player/session models and timeline bridge data.
+  webxr/ owns A-Frame scene primitives and crop-mask visuals.
+  ui/ owns player/workbench/effects/BGM panels.
+  controls/ mostly separates input adapters from semantic operations.
+
+Still mixed:
+  PcWebXrEditor.tsx still owns player-session switching, crop workflow, render workflow, and status resets.
+  There is no explicit typed event layer yet; commands are split between React callbacks, A-Frame/window events, and operation callbacks.
+  Backend workflow code is split between PcWebXrEditor, timeline-bridge, PcBgmControls, and src/lib/api.ts.
+```
+
+`PcWebXrEditor.tsx` should remain the top-level composition point. Do not add new interaction logic directly to it. Prefer extracting new flows into event, workflow, backend adapter, or transport modules.
+
+Target dependency direction:
+
+```text
+visual player/editor UI
+  -> interaction callbacks
+  -> typed editor events
+  -> workflow hooks
+  -> backend adapters
+  -> transport in src/lib/api.ts or timeline bridge transport
+```
+
+Visual split:
+
+```text
+player visual block:
+  AFrameEditorScene, video element, videosphere, playback state, playlist, PcPlayerControls.
+
+editor visual block:
+  AFrameCropViewportMask, AFrameCropViewportArcs, PcWorkbenchPanel, PcEffectsPanel, PcEffectPreview, PcBgmControls, debug/export state.
+```
 
 ## Control Boundary
 

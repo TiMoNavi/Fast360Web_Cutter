@@ -1,5 +1,10 @@
 import type { AFrame360VideoSource } from "@/features/webxr/pc-editor/controls/types";
 import type { ViewTargetPose } from "@/features/webxr/pc-editor/data/timeline-bridge";
+import {
+  DEFAULT_CROP_FOV_H,
+  MAX_CROP_FOV_H,
+  MIN_CROP_FOV_H
+} from "@/features/webxr/pc-editor/webxr/AFrameCropViewportMask";
 import type { QuickMenuItem } from "./types";
 
 export const DEG_TO_RAD = Math.PI / 180;
@@ -8,6 +13,9 @@ export const DUAL_SELECT_COMBO_MS = 160;
 export const FOV_FLUSH_DEBOUNCE_MS = 260;
 export const FOV_THUMBSTICK_DEADZONE = 0.18;
 export const FOV_THUMBSTICK_MAX_DEG_PER_SECOND = 34;
+export const DEFAULT_FOV_H = DEFAULT_CROP_FOV_H;
+export const MAX_FOV_H = MAX_CROP_FOV_H;
+export const MIN_FOV_H = MIN_CROP_FOV_H;
 export const MASK_OPACITY_DEFAULT = 0.74;
 export const MASK_OPACITY_MAX = 0.95;
 export const MASK_OPACITY_MIN = 0;

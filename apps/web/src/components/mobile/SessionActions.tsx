@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { abandonCutSession, createCutSession } from "@/lib/api";
+import { abandonCutSession, createCutSession, switchWebXrPlayerSession } from "@/lib/api";
 
 type SessionActionsProps = {
   videoId: string;
@@ -24,10 +24,7 @@ export function SessionActions({ videoId, currentSessionId }: SessionActionsProp
     currentSessionId ? "可以继续进入当前 WebXR session。" : "创建 session 后可在 Quest 中取景。"
   );
   const [isBusy, setIsBusy] = useState(false);
-  const xrHref = useMemo(
-    () => `/xr/videos/${encodeURIComponent(videoId)}/session/${encodeURIComponent(sessionId)}`,
-    [sessionId, videoId]
-  );
+  const xrHref = "/xr/player";
 
   async function createOnly() {
     setIsBusy(true);
@@ -49,7 +46,20 @@ export function SessionActions({ videoId, currentSessionId }: SessionActionsProp
     setMessage("正在准备 WebXR 入口...");
     try {
       const session = await createCutSession(videoId, sessionId);
-      router.push(`/xr/videos/${encodeURIComponent(videoId)}/session/${encodeURIComponent(session.sessionId)}`);
+      setSessionId(session.sessionId);
+      router.push(xrHref);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "进入 WebXR 失败。");
+      setIsBusy(false);
+    }
+  }
+
+  async function enterActiveVideo() {
+    setIsBusy(true);
+    setMessage("正在切换 WebXR session...");
+    try {
+      await switchWebXrPlayerSession(videoId);
+      router.push(xrHref);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "进入 WebXR 失败。");
       setIsBusy(false);
@@ -102,9 +112,9 @@ export function SessionActions({ videoId, currentSessionId }: SessionActionsProp
         >
           创建入口
         </button>
-        <a className="button" href={xrHref}>
+        <button className="button" disabled={isBusy} onClick={() => void enterActiveVideo()} type="button">
           直接打开
-        </a>
+        </button>
         {currentSessionId ? (
           <button className="button danger" disabled={isBusy} onClick={abandonCurrent} type="button">
             放弃当前 session

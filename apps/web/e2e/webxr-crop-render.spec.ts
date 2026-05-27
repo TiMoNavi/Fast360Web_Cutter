@@ -95,7 +95,7 @@ async function createGridSession(page: Page) {
   return {
     sessionId,
     videoId: video.id,
-    xrPath: `/xr/videos/${encodeURIComponent(video.id)}/session/${encodeURIComponent(sessionId)}`
+    xrPath: "/xr/player"
   };
 }
 
@@ -114,7 +114,7 @@ async function openPcEditor(page: Page, xrPath: string) {
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const video = document.querySelector("video[id^='session-video-']") as HTMLVideoElement | null;
+        const video = document.querySelector("video#xr-library-player-video, video[id^='session-video-']") as HTMLVideoElement | null;
         return video?.readyState ?? 0;
       })
     )
@@ -126,7 +126,7 @@ async function runSingleAxisMove(page: Page, axisCase: AxisCase) {
   const beforeRevision = (await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.pathRevision ?? 0;
 
   await page.evaluate(async () => {
-    const video = document.querySelector("video[id^='session-video-']") as HTMLVideoElement | null;
+    const video = document.querySelector("video#xr-library-player-video, video[id^='session-video-']") as HTMLVideoElement | null;
     if (!video) {
       throw new Error("session video element missing");
     }
@@ -143,7 +143,7 @@ async function runSingleAxisMove(page: Page, axisCase: AxisCase) {
   await page.waitForTimeout(250);
 
   await page.evaluate(() => {
-    const video = document.querySelector("video[id^='session-video-']") as HTMLVideoElement | null;
+    const video = document.querySelector("video#xr-library-player-video, video[id^='session-video-']") as HTMLVideoElement | null;
     video?.pause();
   });
   const finalCrop = await readCropMaskState(page);
@@ -267,7 +267,7 @@ async function setMaskCenter(page: Page, center: { yaw: number; pitch: number })
 
 async function setVideoForRecording(page: Page, playbackRate: number) {
   await page.evaluate(async (rate) => {
-    const video = document.querySelector("video[id^='session-video-']") as HTMLVideoElement | null;
+    const video = document.querySelector("video#xr-library-player-video, video[id^='session-video-']") as HTMLVideoElement | null;
     if (!video) {
       throw new Error("session video element missing");
     }
@@ -327,7 +327,7 @@ function cropStateToAcceptedPoint(cropState: CropMaskState): AcceptedPathPoint {
 
 async function pauseVideo(page: Page) {
   await page.evaluate(() => {
-    const video = document.querySelector("video[id^='session-video-']") as HTMLVideoElement | null;
+    const video = document.querySelector("video#xr-library-player-video, video[id^='session-video-']") as HTMLVideoElement | null;
     video?.pause();
   });
 }
@@ -855,11 +855,11 @@ test.describe("PC WebXR crop render alignment", () => {
     });
   }
 
-  test("PC workflow start/end/render buttons run a complete crop export", async ({ page }, testInfo) => {
+  test("PC workflow start/end auto-render runs a complete crop export", async ({ page }, testInfo) => {
     const session = await createGridSession(page);
     await openPcEditor(page, session.xrPath);
     await page.evaluate(async () => {
-      const video = document.querySelector("video[id^='session-video-']") as HTMLVideoElement | null;
+      const video = document.querySelector("video#xr-library-player-video, video[id^='session-video-']") as HTMLVideoElement | null;
       if (!video) {
         throw new Error("session video element missing");
       }
@@ -880,15 +880,25 @@ test.describe("PC WebXR crop render alignment", () => {
     await page.waitForTimeout(260);
     await page.keyboard.up("w");
 
+    const beforeEndRevision = (await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.pathRevision ?? 0;
     await page.getByTestId("xr-pc-end-crop").click();
-    await expect(page.getByTestId("xr-pc-render-status")).toContainText("Crop path sealed", { timeout: 10_000 });
+    await expect(page.getByTestId("xr-pc-render-status")).toContainText("Export ready", { timeout: 90_000 });
+    await expect
+      .poll(async () => {
+        const state = await readTimelineBridgeState(page);
+        const revision = state?.lastAcceptedPathPatch?.pathRevision ?? 0;
+        const lastPoint = state?.lastAcceptedPathPatch?.lastPoint;
+        return {
+          hasPoint: Boolean(lastPoint?.center && lastPoint.fov),
+          revision
+        };
+      })
+      .toEqual(expect.objectContaining({ hasPoint: true, revision: expect.any(Number) }));
     const lastPoint = (await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.lastPoint;
     if (!lastPoint?.center || !lastPoint.fov) {
       throw new Error("workflow did not expose the final accepted crop point");
     }
-
-    await page.getByTestId("xr-pc-render").click();
-    await expect(page.getByTestId("xr-pc-render-status")).toContainText("Export ready", { timeout: 90_000 });
+    expect((await readTimelineBridgeState(page))?.lastAcceptedPathPatch?.pathRevision ?? 0).toBeGreaterThan(beforeEndRevision);
     const downloadLink = page.getByTestId("xr-pc-export-download");
     await expect(downloadLink).toBeVisible();
     const href = await downloadLink.getAttribute("href");
