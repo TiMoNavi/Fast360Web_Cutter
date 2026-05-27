@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PcEditorEventRoot } from "@/components/pc_editor/composition";
 import type { PcEditorPlayerModel } from "@/components/pc_editor/data/buildPcEditorSessionModel";
 import { useAFrameTimelineBridge } from "@/components/pc_editor/data/timeline-bridge";
@@ -9,6 +9,7 @@ import { apiUrl } from "@/lib/api";
 import {
   playerV2KeyboardBindings,
   useKeyboardEventBindings,
+  usePcBulletTimeToggle,
   usePcViewportKeyboardFov,
   usePcViewportKeyboardMotion,
   useSphereFovWheelBinding
@@ -95,6 +96,54 @@ function readDebugImmersiveParam() {
 
   const params = new URLSearchParams(window.location.search);
   return params.get("xrDebug") === "1" || params.get("debugImmersive") === "1";
+}
+
+function ImmersiveDiscardToast({ active }: { active: boolean }) {
+  if (!active) {
+    return null;
+  }
+
+  return createElement(
+    "a-entity",
+    {
+      "data-testid": "player-v2-immersive-discard-toast",
+      position: "0 -0.32 -1.35"
+    },
+    createElement("a-plane", {
+      height: "0.22",
+      material: "shader: flat; color: #2a0208; emissive: #2a0208; emissiveIntensity: 0.45; opacity: 0.88; transparent: true; side: double; depthTest: false; depthWrite: false",
+      position: "0 0 0",
+      width: "1.16"
+    }),
+    createElement("a-plane", {
+      height: "0.18",
+      material: "shader: flat; color: #ff335c; emissive: #ff335c; emissiveIntensity: 0.72; opacity: 0.18; transparent: true; side: double; depthTest: false; depthWrite: false",
+      position: "0 0 0.006",
+      width: "1.06"
+    }),
+    createElement("a-text", {
+      align: "center",
+      baseline: "center",
+      color: "#ffffff",
+      material: "shader: msdf; emissive: #ffffff; emissiveIntensity: 0.7; depthTest: false; depthWrite: false",
+      position: "0 0.034 0.014",
+      scale: "0.18 0.18 0.18",
+      value: "DISCARD ACTIVE",
+      width: "4.8",
+      wrapCount: "28"
+    }),
+    createElement("a-text", {
+      align: "center",
+      baseline: "center",
+      color: "#ffdce4",
+      material: "shader: msdf; emissive: #ffdce4; emissiveIntensity: 0.55; depthTest: false; depthWrite: false",
+      position: "0 -0.046 0.014",
+      scale: "0.105 0.105 0.105",
+      value: "当前播放内容将被放弃",
+      width: "5.4",
+      wrapCount: "18"
+    })
+  );
 }
 
 export function PlayerV2({ model }: PlayerV2Props) {
@@ -252,6 +301,7 @@ function PlayerV2Content({ model }: PlayerV2Props) {
     bindings: playerV2KeyboardBindings,
     enabled: true
   });
+  usePcBulletTimeToggle({ enabled: true });
   usePcViewportKeyboardMotion({ enabled: true });
   usePcViewportKeyboardFov({ enabled: true });
 
@@ -525,6 +575,7 @@ function PlayerV2Content({ model }: PlayerV2Props) {
       >
         {cropMaskRuntimeReady ? (
           <AFrame360VideoPlayer
+            cameraChildren={<ImmersiveDiscardToast active={immersive3DUiEnabled && discardState.active} />}
             cameraRef={cameraRef}
             ref={playerRef}
             onSceneReady={(scene) => {

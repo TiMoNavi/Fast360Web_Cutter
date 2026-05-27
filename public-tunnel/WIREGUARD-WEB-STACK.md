@@ -76,10 +76,13 @@ LOCAL_API_PORT_CANDIDATES=8000,8010,5000,5001
 ```text
 API_BASE_URL=http://127.0.0.1:<BackendPort>
 NEXT_PUBLIC_API_BASE_URL=
+NEXT_DIST_DIR=.next-public-tunnel
 ```
 
 `API_BASE_URL` 只给 Next 服务端 rewrite 使用；浏览器端保持同源 `/api`，
 避免公网页面把请求发到访问者自己的 `127.0.0.1`。
+`NEXT_DIST_DIR` 隔离公网 dev server 的编译缓存，避免和其它本地 Next dev
+端口同时写同一个 `.next` 目录。
 
 如果只想接入已经运行的服务，不自动启动：
 

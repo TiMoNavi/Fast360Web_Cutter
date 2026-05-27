@@ -12,6 +12,15 @@ The backend endpoint `/api/effects/catalog` is the source of truth for product e
 
 The backend must not send executable frontend code. It sends stable effect ids, canonical render event names, default params, render support, and preview descriptors. The frontend maps preview descriptors to local React/A-Frame components.
 
+## Timing semantics
+
+All effect timing should go through `effects/timing.ts`:
+
+- `rates.effectSpeed` is the authored/render speed controlled by the FX speed button. Effect compiler outputs use `semanticDurationMs = authoredDurationMs / effectSpeed`, so frontend previews and backend timeline events share the same video-time duration.
+- `rates.frontendPlaybackRate` is the preview playback rate controlled by bullet time. It slows video, frontend previews, and editor operation animation, but it is never written to the backend timeline.
+- Finite previews advance with `previewElapsedMs(startedAt, now, frontendPlaybackRate)`. Looping shader/texture previews advance with `previewClockMs(startedAt, now, effectSpeed, frontendPlaybackRate)`.
+- Hold effects record the user's held video-time range. `effectSpeed` may scale internal fade/edge timing, but it must not shrink the overall held `startMs` / `endMs` range.
+
 ## Reference pattern: black fade
 
 Black fade is the reference implementation for viewport-mask effects. New effects should follow the same boundaries:

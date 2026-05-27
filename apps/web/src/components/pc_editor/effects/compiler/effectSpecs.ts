@@ -395,6 +395,95 @@ const EFFECT_SPECS = {
       stage: "overlay_frame"
     }
   },
+  "portal-ring": {
+    defaultDurationMs: 1800,
+    defaultParams: {
+      color: "#00d8ff",
+      coreColor: "#05061f",
+      opacity: 0.92,
+      radius: 0.31,
+      secondaryColor: "#ff4dff",
+      thickness: 0.035
+    },
+    engine: "overlay",
+    eventName: "overlay.portal_ring" as EffectEventName,
+    family: "light-particle",
+    id: "portal-ring",
+    inputs: {
+      state: ["playback", "viewTarget"]
+    },
+    label: "Portal ring",
+    preview: {
+      accuracy: "approximate",
+      pc: "dom",
+      target: "viewport-mask",
+      vr: "aframe-shader"
+    },
+    render: {
+      backendSupport: "supported",
+      fallback: "warn",
+      stage: "overlay_frame"
+    }
+  },
+  "time-vortex": {
+    defaultDurationMs: 2200,
+    defaultParams: {
+      color: "#4be3ff",
+      coreColor: "#02030d",
+      opacity: 0.86,
+      radius: 0.36,
+      secondaryColor: "#9a4dff"
+    },
+    engine: "overlay",
+    eventName: "overlay.time_vortex" as EffectEventName,
+    family: "light-particle",
+    id: "time-vortex",
+    inputs: {
+      state: ["playback", "viewTarget"]
+    },
+    label: "Time vortex",
+    preview: {
+      accuracy: "approximate",
+      pc: "dom",
+      target: "viewport-mask",
+      vr: "aframe-shader"
+    },
+    render: {
+      backendSupport: "supported",
+      fallback: "warn",
+      stage: "overlay_frame"
+    }
+  },
+  "explosion-sticker": {
+    defaultDurationMs: 900,
+    defaultParams: {
+      color: "#fff0a0",
+      emberColor: "#ff1f00",
+      opacity: 0.95,
+      radius: 0.34,
+      secondaryColor: "#ff6a00",
+      smokeColor: "#282018"
+    },
+    engine: "overlay",
+    eventName: "overlay.explosion_sticker" as EffectEventName,
+    family: "light-particle",
+    id: "explosion-sticker",
+    inputs: {
+      state: ["playback", "viewTarget"]
+    },
+    label: "Explosion sticker",
+    preview: {
+      accuracy: "approximate",
+      pc: "dom",
+      target: "viewport-mask",
+      vr: "aframe-shader"
+    },
+    render: {
+      backendSupport: "supported",
+      fallback: "warn",
+      stage: "overlay_frame"
+    }
+  },
   "beat-marker": {
     engine: "audio",
     family: "audio-beat",

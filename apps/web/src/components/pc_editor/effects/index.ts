@@ -29,6 +29,22 @@ export {
   fetchPcEditorEffectCatalog
 } from "./effectCatalogClient";
 export {
+  clampEffectSpeed,
+  clampFrontendPlaybackRate,
+  EFFECT_SPEED_DEFAULT,
+  EFFECT_SPEED_MAX,
+  EFFECT_SPEED_MIN,
+  FRONTEND_PLAYBACK_RATE_DEFAULT,
+  previewClockMs,
+  previewElapsedMs,
+  readEffectTiming,
+  readNumberParam,
+  scaleTemporalParams,
+  semanticDurationMs,
+  type EffectTiming,
+  type EffectTimingInput
+} from "./timing";
+export {
   PcEditorEffectInputController,
   VR_SUPPORTED_EFFECT_FALLBACK_CATEGORIES,
   filterVrSupportedEffectCategories,

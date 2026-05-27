@@ -5,6 +5,7 @@ import type { PcMaskOperations } from "../operations/maskOperations";
 import type { PcViewCenter } from "../PcTrajectoryRippleCorrector";
 import type { AFrame360PlaybackState } from "../types";
 import { clampNumber, edgeAxisSpeed, viewCenterToScreenPoint } from "../operations/viewGeometry";
+import { getPcEditorFrontendPlaybackRate } from "../../state";
 
 const EDGE_PAN_ACCEL_RESPONSE_SECONDS = 0.16;
 const EDGE_PAN_DECEL_RESPONSE_SECONDS = 0.24;
@@ -107,11 +108,12 @@ export function usePcEdgePan({
       edgePanLastTimeRef.current = time;
 
       const target = edgePanTargetRef.current;
+      const frontendRate = getPcEditorFrontendPlaybackRate();
       const response =
         Math.abs(target.yawSpeed) > EDGE_PAN_STOP_EPSILON_DEG_PER_SECOND ||
         Math.abs(target.pitchSpeed) > EDGE_PAN_STOP_EPSILON_DEG_PER_SECOND
-          ? EDGE_PAN_ACCEL_RESPONSE_SECONDS
-          : EDGE_PAN_DECEL_RESPONSE_SECONDS;
+          ? EDGE_PAN_ACCEL_RESPONSE_SECONDS / frontendRate
+          : EDGE_PAN_DECEL_RESPONSE_SECONDS / frontendRate;
       const alpha = 1 - Math.exp(-deltaSeconds / response);
       edgePanRef.current = {
         pitchSpeed: edgePanRef.current.pitchSpeed + (target.pitchSpeed - edgePanRef.current.pitchSpeed) * alpha,
@@ -120,7 +122,7 @@ export function usePcEdgePan({
       const { pitchSpeed, yawSpeed } = edgePanRef.current;
 
       if (Math.abs(yawSpeed) > EDGE_PAN_STOP_EPSILON_DEG_PER_SECOND || Math.abs(pitchSpeed) > EDGE_PAN_STOP_EPSILON_DEG_PER_SECOND) {
-        maskRef.current.bindMaskAndCameraBy(yawSpeed * deltaSeconds, pitchSpeed * deltaSeconds, 90);
+        maskRef.current.bindMaskAndCameraBy(yawSpeed * deltaSeconds * frontendRate, pitchSpeed * deltaSeconds * frontendRate, 90);
       }
 
       edgePanFrameRef.current = window.requestAnimationFrame(tick);

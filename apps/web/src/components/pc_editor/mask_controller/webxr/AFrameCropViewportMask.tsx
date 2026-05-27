@@ -1,7 +1,7 @@
 "use client";
 
 import { createElement } from "react";
-import { setPcEditorCropMaskState } from "../../state";
+import { getPcEditorFrontendPlaybackRate, setPcEditorCropMaskState } from "../../state";
 import { verticalFovFromHorizontal } from "../viewFov";
 
 export const WEBXR_CROP_MASK_CHANGE_EVENT = "webxr:crop-mask-change";
@@ -798,7 +798,7 @@ export function registerAFrameCropViewportMaskComponents() {
       if (uniforms) {
         uniforms.uTime.value = time;
         if (this.opacityAnimation) {
-          const elapsed = performance.now() - this.opacityAnimation.startedAt;
+          const elapsed = (performance.now() - this.opacityAnimation.startedAt) * getPcEditorFrontendPlaybackRate();
           const progress = clamp(elapsed / Math.max(this.opacityAnimation.durationMs, 1), 0, 1);
           const eased = progress * progress * (3 - 2 * progress);
           this.opacityValue = this.opacityAnimation.from + (this.opacityAnimation.to - this.opacityAnimation.from) * eased;

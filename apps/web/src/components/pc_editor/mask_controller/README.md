@@ -23,7 +23,7 @@ float roundedRectSdf = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uCornerRa
 ## Controls
 
 - `operations/maskOperations.ts` is legacy-only support for old pages that still dispatch custom events consumed by old A-Frame mask components. Active Player V2 supplies an EventBus-backed `PcMaskOperations` adapter at the composition boundary.
-- `inputs/usePcMaskPointerInput.ts` handles click-to-move, drag-to-pan, mask drag, and `V` + left pointer center-follow.
+- `inputs/usePcMaskPointerInput.ts` handles click-to-move, drag-to-pan, mask drag, and `V` toggle + left pointer center-follow.
 - `inputs/usePcEdgePan.ts` restores the original edge-pan support used while dragging the mask near the viewport edge.
 - `inputs/usePcWheelZoom.ts` maps the wheel modifier target `mask-opacity` to opacity changes.
 - `webxr/AFrameCropViewportArcs.tsx` draws the four corner handles and emits FOV changes while dragging.

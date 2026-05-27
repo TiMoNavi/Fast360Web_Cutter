@@ -89,7 +89,9 @@ export type PcEditorPlaybackRuntimeState = {
 };
 
 export type PcEditorRateRuntimeState = {
+  bulletTimeActive: boolean;
   effectSpeed: number;
+  frontendPlaybackRate: number;
   recordingRate: number;
   updatedAt: number;
 };
@@ -301,7 +303,7 @@ const EMPTY_STATE: PcEditorRuntimeState = {
   discard: {
     active: false,
     lastRange: null,
-    message: "Hold a discard control to mark a range.",
+    message: "Press a discard control to start a range. Press again or release hold UI to finish.",
     tone: "idle",
     updatedAt: 0
   },
@@ -338,7 +340,9 @@ const EMPTY_STATE: PcEditorRuntimeState = {
   maskViewportBounds: null,
   playback: null,
   rates: {
+    bulletTimeActive: false,
     effectSpeed: 1,
+    frontendPlaybackRate: 1,
     recordingRate: 1,
     updatedAt: 0
   },
@@ -677,6 +681,10 @@ export function usePcEditorRuntimeStateStore() {
 
 export function getPcEditorRuntimeState() {
   return pcEditorRuntimeStateStore.getSnapshot();
+}
+
+export function getPcEditorFrontendPlaybackRate() {
+  return Math.max(0.01, pcEditorRuntimeStateStore.getSnapshot().rates.frontendPlaybackRate);
 }
 
 export function subscribePcEditorRuntimeState(listener: () => void) {

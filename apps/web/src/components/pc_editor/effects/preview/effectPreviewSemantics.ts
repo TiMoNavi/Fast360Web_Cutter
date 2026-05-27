@@ -34,7 +34,10 @@ const VIEWPORT_MASK_EVENT_NAMES = new Set([
   "frame.look_around",
   "frame.reveal_pull",
   "overlay.letterbox",
+  "overlay.explosion_sticker",
+  "overlay.portal_ring",
   "overlay.text",
+  "overlay.time_vortex",
   "transition.fade_black",
   "transition.flash_white"
 ]);
@@ -52,6 +55,7 @@ const EFFECT_ID_EVENT_NAMES: Record<string, EffectEventName> = {
   "drift-left-parallax": "frame.drift_left_parallax" as EffectEventName,
   "dolly-zoom": "frame.dolly_zoom" as EffectEventName,
   "edge-vignette": "filter.vignette" as EffectEventName,
+  "explosion-sticker": "overlay.explosion_sticker" as EffectEventName,
   "flash-cut": "transition.flash_white" as EffectEventName,
   "focus-box": "highlight" as EffectEventName,
   "grid-dissolve": "filter.blur" as EffectEventName,
@@ -63,11 +67,13 @@ const EFFECT_ID_EVENT_NAMES: Record<string, EffectEventName> = {
   "look-around": "frame.look_around" as EffectEventName,
   "magenta-wash": "filter.color_grade" as EffectEventName,
   "neon-wipe": "highlight" as EffectEventName,
+  "portal-ring": "overlay.portal_ring" as EffectEventName,
   "reveal-pull": "frame.reveal_pull" as EffectEventName,
   "rgb-split": "filter.chromatic_aberration" as EffectEventName,
   "soft-blur": "filter.blur" as EffectEventName,
   "sunset-grade": "filter.color_grade" as EffectEventName,
   "text-title": "overlay.text" as EffectEventName,
+  "time-vortex": "overlay.time_vortex" as EffectEventName,
   "vhs-blank": "black.solid" as EffectEventName,
   "warm-vhs": "filter.color_grade" as EffectEventName,
   "white-fade": "transition.flash_white" as EffectEventName
@@ -192,6 +198,18 @@ export function resolveViewportMaskPreviewTone(descriptor: EffectPreviewDescript
 
   if (descriptor.eventName === "overlay.text") {
     return "cyan";
+  }
+
+  if (descriptor.eventName === "overlay.portal_ring") {
+    return "cyan";
+  }
+
+  if (descriptor.eventName === "overlay.time_vortex") {
+    return "magenta";
+  }
+
+  if (descriptor.eventName === "overlay.explosion_sticker") {
+    return "orange";
   }
 
   return null;

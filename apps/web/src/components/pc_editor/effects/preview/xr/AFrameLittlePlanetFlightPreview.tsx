@@ -20,6 +20,12 @@ import {
   type PcEditorViewTargetRuntimeState,
   type PcEditorXrCameraRigPoseRuntimeState
 } from "../../../state";
+import {
+  previewElapsedMs,
+  readEffectTiming,
+  readNumberParam,
+  scaleTemporalParams
+} from "../../timing";
 
 type AFrameEntityElement = HTMLElement & {
   components?: {
@@ -146,11 +152,6 @@ function readRecordPayload(payload: unknown, key: string) {
 
   const value = (payload as Record<string, unknown>)[key];
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
-function readNumberParam(params: Record<string, unknown> | null, key: string, fallback: number) {
-  const value = params?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function numberOrFallback(value: unknown, fallback: number) {
@@ -468,38 +469,43 @@ function LittlePlanetFlightEventController({ sphereRadius = DEFAULT_SPHERE_RADIU
     }
 
     const params = readRecordPayload(event.payload, "params");
-    const durationMs = Math.max(
-      520,
-      readNumberPayload(event.payload, "durationMs") ?? readNumberParam(params, "durationMs", preset.defaultDurationMs)
-    );
+    const timing = readEffectTiming({
+      authoredDurationMs: readNumberPayload(event.payload, "durationMs"),
+      effectSpeed: readNumberPayload(event.payload, "effectSpeed") ?? getPcEditorRuntimeState().rates.effectSpeed,
+      fallbackDurationMs: preset.defaultDurationMs,
+      minDurationMs: 520,
+      params
+    });
+    const timedParams = scaleTemporalParams(params, timing.effectSpeed);
+    const durationMs = timing.semanticDurationMs;
     const peakAtMs = clamp(
-      readNumberParam(params, "peakAtMs", preset.defaultPeakAtMs),
+      readNumberParam(timedParams, "peakAtMs", Math.round(preset.defaultPeakAtMs / timing.effectSpeed)),
       120,
       durationMs - 120
     );
     const peakHeight = clamp(
-      readNumberParam(params, "previewFlightHeight", preset.defaultFlightHeight(sphereRadius)),
+      readNumberParam(timedParams, "previewFlightHeight", preset.defaultFlightHeight(sphereRadius)),
       2,
       Math.max(2, sphereRadius - 2)
     );
     const peakFov = clamp(
-      readNumberParam(params, "previewFov", readNumberParam(params, "peakSphereFov", preset.defaultPreviewFov)),
+      readNumberParam(timedParams, "previewFov", readNumberParam(timedParams, "peakSphereFov", preset.defaultPreviewFov)),
       75,
       160
     );
-    const peakPitch = clamp(readNumberParam(params, "previewPitch", preset.defaultPreviewPitch), -95, -60);
+    const peakPitch = clamp(readNumberParam(timedParams, "previewPitch", preset.defaultPreviewPitch), -95, -60);
     const maskPeakAtMs = clamp(
-      readNumberParam(params, "previewMaskPeakAtMs", peakAtMs),
+      readNumberParam(timedParams, "previewMaskPeakAtMs", peakAtMs),
       120,
       durationMs - 120
     );
     const maskPeakFov = clamp(
-      readNumberParam(params, "previewMaskFov", MAX_CROP_FOV_H),
+      readNumberParam(timedParams, "previewMaskFov", MAX_CROP_FOV_H),
       35,
       MAX_CROP_FOV_H
     );
     const maskPeakPitch = clamp(
-      readNumberParam(params, "previewMaskPitch", preset.defaultMaskPitch),
+      readNumberParam(timedParams, "previewMaskPitch", preset.defaultMaskPitch),
       -88,
       -45
     );
@@ -570,7 +576,7 @@ function LittlePlanetFlightEventController({ sphereRadius = DEFAULT_SPHERE_RADIU
     };
 
     const tick = (now: number) => {
-      const elapsed = now - startedAt;
+      const elapsed = previewElapsedMs(startedAt, now, getPcEditorRuntimeState().rates.frontendPlaybackRate);
       writeViewportMask(maskAt(elapsed));
 
       if (elapsed <= peakAtMs) {
@@ -643,31 +649,36 @@ function DollyZoomFlightEventController({ sphereRadius = DEFAULT_SPHERE_RADIUS }
     }
 
     const params = readRecordPayload(event.payload, "params");
-    const durationMs = Math.max(
-      520,
-      readNumberPayload(event.payload, "durationMs") ?? readNumberParam(params, "durationMs", DEFAULT_DOLLY_ZOOM_DURATION_MS)
-    );
+    const timing = readEffectTiming({
+      authoredDurationMs: readNumberPayload(event.payload, "durationMs"),
+      effectSpeed: readNumberPayload(event.payload, "effectSpeed") ?? getPcEditorRuntimeState().rates.effectSpeed,
+      fallbackDurationMs: DEFAULT_DOLLY_ZOOM_DURATION_MS,
+      minDurationMs: 520,
+      params
+    });
+    const timedParams = scaleTemporalParams(params, timing.effectSpeed);
+    const durationMs = timing.semanticDurationMs;
     const peakAtMs = clamp(
-      readNumberParam(params, "peakAtMs", DEFAULT_DOLLY_ZOOM_PEAK_AT_MS),
+      readNumberParam(timedParams, "peakAtMs", Math.round(DEFAULT_DOLLY_ZOOM_PEAK_AT_MS / timing.effectSpeed)),
       120,
       durationMs - 120
     );
     const start = currentRigPose();
     const startMask = currentViewportMask();
     const dollyDistance = clamp(
-      readNumberParam(params, "previewDollyDistance", DEFAULT_DOLLY_ZOOM_DISTANCE),
+      readNumberParam(timedParams, "previewDollyDistance", DEFAULT_DOLLY_ZOOM_DISTANCE),
       -Math.max(2, sphereRadius * 0.35),
       Math.max(2, sphereRadius * 0.35)
     );
     const targetFov = clamp(
-      readNumberParam(params, "previewFov", readNumberParam(params, "peakSphereFov", DEFAULT_DOLLY_ZOOM_FOV)),
+      readNumberParam(timedParams, "previewFov", readNumberParam(timedParams, "peakSphereFov", DEFAULT_DOLLY_ZOOM_FOV)),
       45,
       150
     );
-    const peakFovDelta = readNumberParam(params, "peakDeltaFovH", -18);
-    const maskFovDelta = readNumberParam(params, "previewMaskFovDelta", peakFovDelta);
+    const peakFovDelta = readNumberParam(timedParams, "peakDeltaFovH", -18);
+    const maskFovDelta = readNumberParam(timedParams, "previewMaskFovDelta", peakFovDelta);
     const maskPeakFov = clamp(
-      readNumberParam(params, "previewMaskFov", startMask.fov.h + maskFovDelta),
+      readNumberParam(timedParams, "previewMaskFov", startMask.fov.h + maskFovDelta),
       35,
       MAX_CROP_FOV_H
     );
@@ -725,7 +736,7 @@ function DollyZoomFlightEventController({ sphereRadius = DEFAULT_SPHERE_RADIUS }
     };
 
     const tick = (now: number) => {
-      const elapsed = now - startedAt;
+      const elapsed = previewElapsedMs(startedAt, now, getPcEditorRuntimeState().rates.frontendPlaybackRate);
       writeViewportMask(maskAt(elapsed));
 
       if (elapsed <= peakAtMs) {

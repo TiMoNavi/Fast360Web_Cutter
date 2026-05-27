@@ -132,6 +132,7 @@ export type EffectSelectCompileInput = {
   categoryId: string;
   conflictGroup?: string | null;
   durationMs?: number | null;
+  effectSpeed?: number | null;
   effectId: string;
   eventName?: string | null;
   fallbackDurationMs?: number;
@@ -160,6 +161,7 @@ export type EffectHoldEndCompileInput = {
   categoryId: string;
   conflictGroup?: string | null;
   durationMs: number;
+  effectSpeed?: number | null;
   effectId: string;
   endMs: number;
   eventName: EffectEventName;

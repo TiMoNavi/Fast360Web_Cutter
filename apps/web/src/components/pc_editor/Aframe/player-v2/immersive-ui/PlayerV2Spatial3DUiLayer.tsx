@@ -7,8 +7,10 @@ import type { AFrame360VideoSource } from "@/components/pc_editor/controls/types
 import { usePcEditorEventEmitter, type PcEditorEventInput } from "@/components/pc_editor/events";
 import {
   getPcEditorRuntimeState,
+  getPcEditorFrontendPlaybackRate,
   setPcEditorControlPressed,
   setPcEditorEffectInput,
+  setPcEditorRateState,
   setPcEditorVrControllerState,
   usePcEditorEffectCatalogState,
   usePcEditorEffectInput,
@@ -42,6 +44,8 @@ const VR_RATE_AXIS_TICK_MS = 140;
 
 type AxisMotionKind = "center" | "fov" | "roll";
 
+type ControllerButtonId = "a" | "b" | "grip" | "trigger" | "x" | "y";
+
 type SpatialRateChipTarget = "effect" | "playback" | "recording";
 
 type ActiveRateChipState = {
@@ -63,6 +67,12 @@ type AFrameDirectionLike = {
 
 type AFrameEntityWithObject3D = HTMLElement & {
   object3D?: {
+    getWorldDirection?: (target: AFrameDirectionLike) => AFrameDirectionLike;
+  };
+};
+
+type AFrameSceneWithCamera = HTMLElement & {
+  camera?: {
     getWorldDirection?: (target: AFrameDirectionLike) => AFrameDirectionLike;
   };
 };
@@ -292,14 +302,22 @@ function readHeadGazeCenter(scene: HTMLElement) {
     return runtimeCameraPose ?? null;
   }
 
+  const sceneCamera = (scene as AFrameSceneWithCamera).camera;
   const camera = scene.querySelector("[camera]") as AFrameEntityWithObject3D | null;
   const Vector3 = (window as AFrameWindowWithThree).AFRAME?.THREE?.Vector3;
 
-  if (!camera?.object3D?.getWorldDirection || !Vector3) {
+  if (!Vector3) {
     return runtimeCameraPose ?? null;
   }
 
-  const direction = camera.object3D.getWorldDirection(new Vector3());
+  const direction =
+    sceneCamera?.getWorldDirection?.(new Vector3()) ??
+    camera?.object3D?.getWorldDirection?.(new Vector3());
+
+  if (!direction) {
+    return runtimeCameraPose ?? null;
+  }
+
   const length = Math.hypot(direction.x, direction.y, direction.z) || 1;
   const x = direction.x / length;
   const y = direction.y / length;
@@ -445,6 +463,49 @@ function readXrControllerAxes(scene: HTMLElement, hand: "left" | "right") {
   }
 
   return null;
+}
+
+function readXrControllerGamepad(scene: HTMLElement, hand: "left" | "right") {
+  const session = (scene as AFrameSceneWithXrSession).xrSession;
+
+  if (!session) {
+    return null;
+  }
+
+  for (const inputSource of Array.from(session.inputSources ?? []) as XrInputSourceWithGamepad[]) {
+    if (inputSource.handedness === hand && inputSource.gamepad) {
+      return inputSource.gamepad;
+    }
+  }
+
+  return null;
+}
+
+function readGamepadButtonPressed(gamepad: Gamepad | null, index: number) {
+  const button = gamepad?.buttons[index];
+
+  return button?.pressed === true || (typeof button?.value === "number" && button.value > 0.55);
+}
+
+function readQuestButtonPressed(scene: HTMLElement, hand: "left" | "right", buttonId: ControllerButtonId) {
+  const gamepad = readXrControllerGamepad(scene, hand);
+
+  switch (buttonId) {
+    case "trigger":
+      return readGamepadButtonPressed(gamepad, 0);
+    case "grip":
+      return readGamepadButtonPressed(gamepad, 1);
+    case "x":
+      return hand === "left" && readGamepadButtonPressed(gamepad, 4);
+    case "y":
+      return hand === "left" && readGamepadButtonPressed(gamepad, 5);
+    case "a":
+      return hand === "right" && readGamepadButtonPressed(gamepad, 4);
+    case "b":
+      return hand === "right" && readGamepadButtonPressed(gamepad, 5);
+    default:
+      return false;
+  }
 }
 
 function rateStepFromThumbstick(event: Event, direction: "down" | "up") {
@@ -702,6 +763,10 @@ function useQuestControllerBindingAdapter({
       if (activeRateChip.target === "playback") {
         bulletTimeActiveRef.current = false;
         bulletTimeRestoreRateRef.current = null;
+        setPcEditorRateState({
+          bulletTimeActive: false,
+          frontendPlaybackRate: DEFAULT_BULLET_TIME_RESTORE_RATE
+        });
       }
 
       smoothRateSet(activeRateChip.target, targetRate);
@@ -731,6 +796,10 @@ function useQuestControllerBindingAdapter({
       if (activeRateChip.target === "playback") {
         bulletTimeActiveRef.current = false;
         bulletTimeRestoreRateRef.current = null;
+        setPcEditorRateState({
+          bulletTimeActive: false,
+          frontendPlaybackRate: DEFAULT_BULLET_TIME_RESTORE_RATE
+        });
       }
 
       smoothRateSet(activeRateChip.target, targetRate);
@@ -816,9 +885,10 @@ function useQuestControllerBindingAdapter({
 
     const adjustMaskOpacityByAxis = (axisY: number, deltaSeconds: number) => {
       const runtime = getPcEditorRuntimeState();
+      const frontendRate = getPcEditorFrontendPlaybackRate();
       const currentOpacity = runtime.viewTarget?.maskOpacity ?? runtime.cropMask?.maskOpacity ?? 0.74;
       const opacity = clampNumber(
-        currentOpacity + (axisY < 0 ? 1 : -1) * Math.abs(axisY) * VR_MASK_OPACITY_SPEED_PER_SECOND * deltaSeconds,
+        currentOpacity + (axisY < 0 ? 1 : -1) * Math.abs(axisY) * VR_MASK_OPACITY_SPEED_PER_SECOND * deltaSeconds * frontendRate,
         VR_MASK_OPACITY_MIN,
         VR_MASK_OPACITY_MAX
       );
@@ -934,6 +1004,10 @@ function useQuestControllerBindingAdapter({
 
         bulletTimeActiveRef.current = false;
         bulletTimeRestoreRateRef.current = null;
+        setPcEditorRateState({
+          bulletTimeActive: false,
+          frontendPlaybackRate: DEFAULT_BULLET_TIME_RESTORE_RATE
+        });
         emitXrRuntimeEvent(emitEvent, {
           type: "player.playback.rate.set",
           payload: { playbackRate: restoreRate }
@@ -944,6 +1018,10 @@ function useQuestControllerBindingAdapter({
       bulletTimeActiveRef.current = true;
       bulletTimeRestoreRateRef.current =
         playbackRate > BULLET_TIME_PLAYBACK_RATE + 0.01 ? playbackRate : DEFAULT_BULLET_TIME_RESTORE_RATE;
+      setPcEditorRateState({
+        bulletTimeActive: true,
+        frontendPlaybackRate: BULLET_TIME_PLAYBACK_RATE
+      });
       emitXrRuntimeEvent(emitEvent, {
         type: "player.playback.rate.set",
         payload: { playbackRate: BULLET_TIME_PLAYBACK_RATE }
@@ -976,6 +1054,56 @@ function useQuestControllerBindingAdapter({
       if (event) {
         emitXrRuntimeEvent(emitEvent, event, id, phase);
       }
+    };
+
+    const closeEffectsRing = () => {
+      emitEventFromAction({ type: "effects.shortcut.key.down", key: "Escape" }, "quest-b-effects-ring-close", "end");
+      setPcEditorEffectInput({ mode: "hidden" });
+    };
+
+    const syncPolledButton = (
+      hand: "left" | "right",
+      buttonId: ControllerButtonId,
+      action: string,
+      onDown?: () => void,
+      onUp?: () => void
+    ) => {
+      const pressed = readQuestButtonPressed(scene, hand, buttonId);
+      const wasPressed = isRuntimeControllerButtonPressed(hand, buttonId);
+
+      if (pressed === wasPressed) {
+        return;
+      }
+
+      writeControllerButtonState({
+        action,
+        buttonId,
+        hand,
+        pressed
+      });
+
+      if (pressed) {
+        onDown?.();
+      } else {
+        onUp?.();
+      }
+    };
+
+    const syncPolledControllerButtons = () => {
+      syncPolledButton("left", "trigger", "trigger");
+      syncPolledButton("right", "trigger", "trigger");
+      syncPolledButton("left", "grip", "grip");
+      syncPolledButton("right", "grip", "grip");
+      syncPolledButton("right", "a", "bullet-time", toggleBulletTime);
+      syncPolledButton("left", "x", "discard-toggle", () => {
+        emitEventFromAction({ type: "timeline.discard.begin" }, "quest-x-discard-toggle", "change");
+      });
+      syncPolledButton("left", "y", "mask-opacity");
+      syncPolledButton("right", "b", "effects-ring", () => {
+        emitEventFromAction({ type: "effects.shortcut.open" }, "quest-b-effects-ring", "start");
+      }, closeEffectsRing);
+      syncDualTriggerPlayback();
+      syncHeadFollow();
     };
 
     const adjustMaskOpacity = (direction: "down" | "up") => {
@@ -1055,6 +1183,8 @@ function useQuestControllerBindingAdapter({
     };
 
     const tickControllerAxes = (time: number) => {
+      syncPolledControllerButtons();
+
       const lastTime = axisLastTimeRef.current ?? time;
       const deltaSeconds = Math.min(VR_AXIS_MAX_DELTA_SECONDS, Math.max(0, (time - lastTime) / 1000));
       axisLastTimeRef.current = time;
@@ -1063,6 +1193,7 @@ function useQuestControllerBindingAdapter({
       const rightAxes = readXrControllerAxes(scene, "right");
       const leftGripPressed = isRuntimeControllerButtonPressed("left", "grip");
       const dualGripPressed = isDualGripPressed();
+      const frontendRate = getPcEditorFrontendPlaybackRate();
       let emittedContinuousAxis = false;
 
       if (dualGripPressed) {
@@ -1073,8 +1204,8 @@ function useQuestControllerBindingAdapter({
         if (leftGripPressed && leftAxes && leftAxes.magnitude > 0) {
           const currentCenter = readRuntimeCenter();
           const motion = axisMotionId("center");
-          const nextPitch = currentCenter.pitch + -leftAxes.y * VR_MASK_CENTER_SPEED_DEG_PER_SECOND * deltaSeconds;
-          const nextYaw = currentCenter.yaw + leftAxes.x * VR_MASK_CENTER_SPEED_DEG_PER_SECOND * deltaSeconds;
+          const nextPitch = currentCenter.pitch + -leftAxes.y * VR_MASK_CENTER_SPEED_DEG_PER_SECOND * deltaSeconds * frontendRate;
+          const nextYaw = currentCenter.yaw + leftAxes.x * VR_MASK_CENTER_SPEED_DEG_PER_SECOND * deltaSeconds * frontendRate;
 
           emitCenterSet(nextPitch, nextYaw, false, motion.phase, motion.id);
           emittedContinuousAxis = true;
@@ -1098,7 +1229,7 @@ function useQuestControllerBindingAdapter({
           if (Math.abs(rightAxes.y) > 0) {
             const currentFov = readRuntimeFovH();
             const motion = axisMotionId("fov");
-            const nextFov = currentFov + rightAxes.y * VR_FOV_SPEED_DEG_PER_SECOND * deltaSeconds;
+            const nextFov = currentFov + rightAxes.y * VR_FOV_SPEED_DEG_PER_SECOND * deltaSeconds * frontendRate;
 
             emitFovSet(nextFov, false, motion.phase, motion.id);
             emittedContinuousAxis = true;
@@ -1109,7 +1240,7 @@ function useQuestControllerBindingAdapter({
           if (Math.abs(rightAxes.x) > 0) {
             const currentRoll = readRuntimeRoll();
             const motion = axisMotionId("roll");
-            const nextRoll = currentRoll + rightAxes.x * VR_ROLL_SPEED_DEG_PER_SECOND * deltaSeconds;
+            const nextRoll = currentRoll + rightAxes.x * VR_ROLL_SPEED_DEG_PER_SECOND * deltaSeconds * frontendRate;
 
             emitRollSet(nextRoll, false, motion.phase, motion.id);
             emittedContinuousAxis = true;
@@ -1152,12 +1283,11 @@ function useQuestControllerBindingAdapter({
       }],
       ["abuttonup", (event) => writeButton(event, "a", false, "bullet-time")],
       ["xbuttondown", (event) => {
-        writeButton(event, "x", true, "discard");
-        emitEventFromAction({ type: "timeline.discard.begin" }, "quest-x-discard", "start");
+        writeButton(event, "x", true, "discard-toggle");
+        emitEventFromAction({ type: "timeline.discard.begin" }, "quest-x-discard-toggle", "change");
       }],
       ["xbuttonup", (event) => {
-        writeButton(event, "x", false, "discard");
-        emitEventFromAction({ type: "timeline.discard.end" }, "quest-x-discard", "end");
+        writeButton(event, "x", false, "discard-toggle");
       }],
       ["ybuttondown", (event) => {
         writeButton(event, "y", true, "mask-opacity");
@@ -1167,7 +1297,10 @@ function useQuestControllerBindingAdapter({
         writeButton(event, "b", true, "effects-ring");
         emitEventFromAction({ type: "effects.shortcut.open" }, "quest-b-effects-ring", "start");
       }],
-      ["bbuttonup", (event) => writeButton(event, "b", false, "effects-ring")],
+      ["bbuttonup", (event) => {
+        writeButton(event, "b", false, "effects-ring");
+        closeEffectsRing();
+      }],
       ["thumbstickup", (event) => handleThumbstick(event, "up")],
       ["thumbstickdown", (event) => handleThumbstick(event, "down")],
       ["thumbstickleft", (event) => handleThumbstick(event, "left")],
@@ -1220,6 +1353,7 @@ export function PlayerV2Spatial3DUiLayer({
   const rates = usePcEditorRateState();
   const viewTarget = usePcEditorViewTarget();
   const xrSession = usePcEditorXrSession();
+  const leftController = usePcEditorVrControllerState("left");
   const rightController = usePcEditorVrControllerState("right");
   const enabled = xrSession?.presenting === true;
 
@@ -1339,9 +1473,17 @@ export function PlayerV2Spatial3DUiLayer({
       "data-effect-catalog-count": String(effectCatalog.categories.reduce((count, category) => count + category.effects.length, 0)),
       "data-effect-mode": effectInput?.mode ?? "hidden",
       "data-mask-fov": String(viewTarget?.fov.h ?? ""),
+      "data-playback-rate": String(playback?.playbackRate ?? 1),
       "data-recording-active": recordingActive ? "true" : "false",
+      "data-left-a-pressed": leftController?.buttons.a?.pressed ? "true" : "false",
+      "data-left-b-pressed": leftController?.buttons.b?.pressed ? "true" : "false",
+      "data-left-grip-pressed": leftController?.buttons.grip?.pressed ? "true" : "false",
+      "data-left-trigger-pressed": leftController?.buttons.trigger?.pressed ? "true" : "false",
+      "data-left-x-pressed": leftController?.buttons.x?.pressed ? "true" : "false",
+      "data-left-y-pressed": leftController?.buttons.y?.pressed ? "true" : "false",
       "data-right-a-pressed": rightController?.buttons.a?.pressed ? "true" : "false",
       "data-right-b-pressed": rightController?.buttons.b?.pressed ? "true" : "false",
+      "data-right-grip-pressed": rightController?.buttons.grip?.pressed ? "true" : "false",
       "data-right-trigger-pressed": rightController?.buttons.trigger?.pressed ? "true" : "false",
       "data-right-x-pressed": rightController?.buttons.x?.pressed ? "true" : "false",
       "data-right-y-pressed": rightController?.buttons.y?.pressed ? "true" : "false",

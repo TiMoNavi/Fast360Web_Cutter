@@ -46,10 +46,12 @@ function mat(color: string, opacity = 1, glow = 0.24) {
 }
 
 function text(value: string, color = WHITE, width = 3) {
+  const textColor = WHITE;
+
   return {
     align: "center",
-    color,
-    material: `shader: msdf; emissive: ${color}; emissiveIntensity: 0.48`,
+    color: textColor,
+    material: `shader: msdf; emissive: ${textColor}; emissiveIntensity: 0.48`,
     value,
     width: String(width),
     wrapCount: "34"

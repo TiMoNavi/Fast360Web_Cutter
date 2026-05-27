@@ -8,9 +8,8 @@ import {
   setPcEditorViewTarget,
   type PcEditorViewTargetRuntimeState
 } from "../../state";
+import { previewElapsedMs, readEffectTiming, readNumberParam, scaleTemporalParams } from "../timing";
 
-const EFFECT_SPEED_MIN = 0.1;
-const EFFECT_SPEED_MAX = 5;
 const MIN_CAMERA_FOV_H = 35;
 const MAX_CAMERA_FOV_H = 140;
 
@@ -182,23 +181,6 @@ function readNumberPayload(payload: unknown, key: string) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function readNumberParam(params: Record<string, unknown> | null, key: string, fallback: number) {
-  const value = params?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function readEffectSpeed(payload: unknown, params: Record<string, unknown> | null) {
-  return clamp(
-    readNumberPayload(payload, "effectSpeed") ?? readNumberParam(params, "effectSpeed", getPcEditorRuntimeState().rates.effectSpeed),
-    EFFECT_SPEED_MIN,
-    EFFECT_SPEED_MAX
-  );
-}
-
-function scaleDurationByEffectSpeed(durationMs: number, effectSpeed: number) {
-  return Math.max(1, Math.round(durationMs / effectSpeed));
-}
-
 function mergeParams(...params: Array<Record<string, unknown> | null | undefined>) {
   return params.reduce<Record<string, unknown>>((merged, value) => {
     if (!value) {
@@ -334,10 +316,16 @@ export function ViewportPathMotionPreviewController() {
     }
 
     const params = mergeParams(preset.defaultParams, readRecordPayload(event.payload, "params"));
-    const effectSpeed = readEffectSpeed(event.payload, params);
-    const baseDurationMs =
-      readNumberPayload(event.payload, "durationMs") ?? readNumberParam(params, "durationMs", preset.defaultDurationMs);
-    const durationMs = Math.max(160, scaleDurationByEffectSpeed(baseDurationMs, effectSpeed));
+    const runtime = getPcEditorRuntimeState();
+    const timing = readEffectTiming({
+      authoredDurationMs: readNumberPayload(event.payload, "durationMs"),
+      effectSpeed: readNumberPayload(event.payload, "effectSpeed") ?? runtime.rates.effectSpeed,
+      fallbackDurationMs: preset.defaultDurationMs,
+      minDurationMs: 160,
+      params
+    });
+    const timedParams = scaleTemporalParams(params, timing.effectSpeed);
+    const durationMs = timing.semanticDurationMs;
     const start = readCurrentViewTarget();
 
     if (preset.id === "impact-shake") {
@@ -347,7 +335,7 @@ export function ViewportPathMotionPreviewController() {
           pitch: start.center.pitch,
           yaw: start.center.yaw
         },
-        ...impactShakeStates(start, params),
+        ...impactShakeStates(start, timedParams ?? {}),
         {
           fovH: start.fov.h,
           pitch: start.center.pitch,
@@ -357,7 +345,7 @@ export function ViewportPathMotionPreviewController() {
       const startedAt = performance.now();
 
       const tick = (now: number) => {
-        const elapsed = now - startedAt;
+        const elapsed = previewElapsedMs(startedAt, now, getPcEditorRuntimeState().rates.frontendPlaybackRate);
 
         if (elapsed < durationMs) {
           const segmentDuration = durationMs / Math.max(states.length - 1, 1);
@@ -391,8 +379,8 @@ export function ViewportPathMotionPreviewController() {
     }
 
     if (preset.id === "look-around") {
-      const sweepAtMs = Math.max(1, Math.round(durationMs * clamp(readNumberParam(params, "sweepAtRatio", 0.42), 0.2, 0.65)));
-      const returnAtMs = Math.max(sweepAtMs + 1, Math.round(durationMs * clamp(readNumberParam(params, "returnAtRatio", 0.72), 0.5, 0.9)));
+      const sweepAtMs = Math.max(1, Math.round(durationMs * clamp(readNumberParam(timedParams, "sweepAtRatio", 0.42), 0.2, 0.65)));
+      const returnAtMs = Math.max(sweepAtMs + 1, Math.round(durationMs * clamp(readNumberParam(timedParams, "returnAtRatio", 0.72), 0.5, 0.9)));
       const states = [
         {
           atMs: 0,
@@ -403,17 +391,17 @@ export function ViewportPathMotionPreviewController() {
         {
           atMs: sweepAtMs,
           ...cameraStateFromDelta(start, {
-            deltaFovH: readNumberParam(params, "widenFovH", 3),
-            deltaPitch: readNumberParam(params, "sweepPitch", 0),
-            deltaYaw: readNumberParam(params, "sweepYaw", 28)
+            deltaFovH: readNumberParam(timedParams, "widenFovH", 3),
+            deltaPitch: readNumberParam(timedParams, "sweepPitch", 0),
+            deltaYaw: readNumberParam(timedParams, "sweepYaw", 28)
           })
         },
         {
           atMs: returnAtMs,
           ...cameraStateFromDelta(start, {
-            deltaFovH: readNumberParam(params, "returnFovH", 1),
-            deltaPitch: readNumberParam(params, "returnPitch", 0),
-            deltaYaw: readNumberParam(params, "returnYaw", -10)
+            deltaFovH: readNumberParam(timedParams, "returnFovH", 1),
+            deltaPitch: readNumberParam(timedParams, "returnPitch", 0),
+            deltaYaw: readNumberParam(timedParams, "returnYaw", -10)
           })
         },
         {
@@ -426,7 +414,7 @@ export function ViewportPathMotionPreviewController() {
       const startedAt = performance.now();
 
       const tick = (now: number) => {
-        const elapsed = now - startedAt;
+        const elapsed = previewElapsedMs(startedAt, now, getPcEditorRuntimeState().rates.frontendPlaybackRate);
 
         if (elapsed < durationMs) {
           const segmentIndex = Math.min(
@@ -462,22 +450,22 @@ export function ViewportPathMotionPreviewController() {
     }
 
     const end = cameraStateFromDelta(start, {
-      deltaFovH: readNumberParam(params, "deltaFovH", 0) + readNumberParam(params, "reboundFovH", 0),
-      deltaPitch: readNumberParam(params, "deltaPitch", 0),
-      deltaYaw: readNumberParam(params, "deltaYaw", 0)
+      deltaFovH: readNumberParam(timedParams, "deltaFovH", 0) + readNumberParam(timedParams, "reboundFovH", 0),
+      deltaPitch: readNumberParam(timedParams, "deltaPitch", 0),
+      deltaYaw: readNumberParam(timedParams, "deltaYaw", 0)
     });
     const peak = preset.id === "hero-push"
       ? cameraStateFromDelta(start, {
-          deltaFovH: readNumberParam(params, "deltaFovH", -10),
-          deltaPitch: readNumberParam(params, "deltaPitch", 0),
-          deltaYaw: readNumberParam(params, "deltaYaw", 0)
+          deltaFovH: readNumberParam(timedParams, "deltaFovH", -10),
+          deltaPitch: readNumberParam(timedParams, "deltaPitch", 0),
+          deltaYaw: readNumberParam(timedParams, "deltaYaw", 0)
         })
       : null;
-    const peakAtMs = Math.max(1, Math.round(durationMs * clamp(readNumberParam(params, "peakAtRatio", 0.72), 0.35, 0.9)));
+    const peakAtMs = Math.max(1, Math.round(durationMs * clamp(readNumberParam(timedParams, "peakAtRatio", 0.72), 0.35, 0.9)));
     const startedAt = performance.now();
 
     const tick = (now: number) => {
-      const elapsed = now - startedAt;
+      const elapsed = previewElapsedMs(startedAt, now, getPcEditorRuntimeState().rates.frontendPlaybackRate);
 
       if (peak && elapsed <= peakAtMs) {
         const progress = easeOut(elapsed / peakAtMs);

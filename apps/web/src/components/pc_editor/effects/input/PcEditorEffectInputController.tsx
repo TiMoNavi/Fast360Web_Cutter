@@ -204,6 +204,45 @@ export const VR_SUPPORTED_EFFECT_FALLBACK_CATEGORIES: PcEditorEffectPanelCategor
         renderStage: "overlay_frame",
         renderSupported: true,
         webxrSupport: "approximate"
+      },
+      {
+        durationMs: 1800,
+        eventName: "overlay.portal_ring",
+        id: "portal-ring",
+        key: "3",
+        label: "Portal ring",
+        params: { color: "#00d8ff", coreColor: "#05061f", opacity: 0.92, radius: 0.31, secondaryColor: "#ff4dff", thickness: 0.035 },
+        previewTarget: "viewport-mask",
+        renderFallback: "warn",
+        renderStage: "overlay_frame",
+        renderSupported: true,
+        webxrSupport: "approximate"
+      },
+      {
+        durationMs: 2200,
+        eventName: "overlay.time_vortex",
+        id: "time-vortex",
+        key: "4",
+        label: "Time vortex",
+        params: { color: "#4be3ff", coreColor: "#02030d", opacity: 0.86, radius: 0.36, secondaryColor: "#9a4dff" },
+        previewTarget: "viewport-mask",
+        renderFallback: "warn",
+        renderStage: "overlay_frame",
+        renderSupported: true,
+        webxrSupport: "approximate"
+      },
+      {
+        durationMs: 900,
+        eventName: "overlay.explosion_sticker",
+        id: "explosion-sticker",
+        key: "5",
+        label: "Explosion sticker",
+        params: { color: "#fff0a0", emberColor: "#ff1f00", opacity: 0.95, radius: 0.34, secondaryColor: "#ff6a00", smokeColor: "#282018" },
+        previewTarget: "viewport-mask",
+        renderFallback: "warn",
+        renderStage: "overlay_frame",
+        renderSupported: true,
+        webxrSupport: "approximate"
       }
     ]
   }

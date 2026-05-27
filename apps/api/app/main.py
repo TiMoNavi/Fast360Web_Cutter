@@ -1658,7 +1658,8 @@ def finalize_recording(
         ).fetchone()
         if session is None:
             raise HTTPException(status_code=404, detail="Cut session not found")
-        rows = conn.execute(
+        session_data = dict(session)
+        row_records = conn.execute(
             """
             SELECT t_ms, yaw, pitch, fov_h, fov_v, enabled, cut,
                 interpolation, transition_ms
@@ -1668,6 +1669,7 @@ def finalize_recording(
             """,
             (session_id,),
         ).fetchall()
+        rows = [dict(row) for row in row_records]
         if len(rows) < 2:
             raise HTTPException(status_code=400, detail="Need at least two path points before finalizing")
 
@@ -1677,7 +1679,7 @@ def finalize_recording(
         requested_end_ms = payload.end_ms if payload and payload.end_ms is not None else last_point_ms
         raw_start_ms = max(first_point_ms, int(requested_start_ms))
         raw_end_ms = min(last_point_ms, int(requested_end_ms))
-        video_duration_ms = int(session["duration_ms"] or 0)
+        video_duration_ms = int(session_data["duration_ms"] or 0)
         validated_end_ms = min(raw_end_ms, video_duration_ms) if video_duration_ms > 0 else raw_end_ms
         validated_end_ms = min(validated_end_ms, raw_start_ms + RECORDING_MAX_DURATION_MS)
         if validated_end_ms - raw_start_ms < RECORDING_MIN_DURATION_MS:
@@ -1697,6 +1699,7 @@ def finalize_recording(
             ("rendering", now, session_id, user["id"]),
         )
 
+    session = session_data
     all_points = [render_point_from_row(point) for point in rows]
     first_point_ms = int(float(all_points[0]["t_ms"]))
     last_point_ms = int(float(all_points[-1]["t_ms"]))
@@ -1897,7 +1900,8 @@ def render_test(
         ).fetchone()
         if session is None:
             raise HTTPException(status_code=404, detail="Cut session not found")
-        points = conn.execute(
+        session_data = dict(session)
+        point_records = conn.execute(
             """
             SELECT t_ms, yaw, pitch, fov_h, fov_v, enabled, cut
             , interpolation, transition_ms
@@ -1907,6 +1911,7 @@ def render_test(
             """,
             (session_id,),
         ).fetchall()
+        points = [dict(point) for point in point_records]
         if len(points) < 2:
             raise HTTPException(status_code=400, detail="Need at least two path points before rendering")
         effects = list_effect_events(conn, session_id, 0, RENDER_TEST_MAX_DURATION_MS)
@@ -1923,6 +1928,7 @@ def render_test(
             ("rendering", now, session_id),
         )
 
+    session = session_data
     source_path = VIDEOS_DIR / session["stored_filename"]
     output_path = EXPORTS_DIR / f"{export_id}.mp4"
     work_dir = TMP_DIR / export_id

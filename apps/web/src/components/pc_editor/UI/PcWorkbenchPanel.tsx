@@ -191,7 +191,7 @@ export function PcWorkbenchPanel({
           <h3>Discard</h3>
           <div className="xr-pc-discard-hold">
             <span className="xr-pc-discard-key">Del</span>
-            <span>{discardActive ? "Release to finish discard range" : "Hold while playing to discard this segment"}</span>
+            <span>{discardActive ? "Press again to finish discard range" : "Press while playing to start discard"}</span>
           </div>
           <p>{discardMessage}</p>
           {discardLastRange ? (

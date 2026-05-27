@@ -9,6 +9,7 @@ import type { PcRateWheelTarget } from "../operations/rateCurve";
 import type { PcTimelineOperations } from "../operations/timelineOperations";
 import { normalizeViewCenter } from "../operations/viewGeometry";
 import { isEditableTarget } from "./domTargetGuards";
+import { getPcEditorFrontendPlaybackRate } from "../../state";
 
 const KEYBOARD_MASK_SPEED_DEG_PER_SECOND = 42;
 const KEYBOARD_MASK_FOV_SPEED_DEG_PER_SECOND = 48;
@@ -139,10 +140,11 @@ export function usePcKeyboardShortcuts({
       const targetYawVelocity = yawAxis ? (yawAxis / length) * KEYBOARD_MASK_SPEED_DEG_PER_SECOND : 0;
       const targetPitchVelocity = pitchAxis ? (pitchAxis / length) * KEYBOARD_MASK_SPEED_DEG_PER_SECOND : 0;
       const targetFovVelocity = fovAxis * KEYBOARD_MASK_FOV_SPEED_DEG_PER_SECOND;
+      const frontendRate = getPcEditorFrontendPlaybackRate();
       const response =
         targetYawVelocity || targetPitchVelocity || targetFovVelocity
-          ? KEYBOARD_MASK_ACCEL_RESPONSE_SECONDS
-          : KEYBOARD_MASK_DECEL_RESPONSE_SECONDS;
+          ? KEYBOARD_MASK_ACCEL_RESPONSE_SECONDS / frontendRate
+          : KEYBOARD_MASK_DECEL_RESPONSE_SECONDS / frontendRate;
       const motion = motionRef.current;
 
       motion.yawVelocity = approachValue(motion.yawVelocity, targetYawVelocity, deltaSeconds, response);
@@ -162,8 +164,8 @@ export function usePcKeyboardShortcuts({
 
       if (maskMoving) {
         const nextCenter = normalizeViewCenter({
-          pitch: latestCenterRef.current.pitch + motion.pitchVelocity * deltaSeconds,
-          yaw: latestCenterRef.current.yaw + motion.yawVelocity * deltaSeconds
+          pitch: latestCenterRef.current.pitch + motion.pitchVelocity * deltaSeconds * frontendRate,
+          yaw: latestCenterRef.current.yaw + motion.yawVelocity * deltaSeconds * frontendRate
         });
 
         latestCenterRef.current = nextCenter;
@@ -171,7 +173,7 @@ export function usePcKeyboardShortcuts({
       }
 
       if (fovMoving) {
-        latestFovRef.current += motion.fovVelocity * deltaSeconds;
+        latestFovRef.current += motion.fovVelocity * deltaSeconds * frontendRate;
         maskRef.current.setPreviewFov(latestFovRef.current, 0);
       }
       frameRef.current = window.requestAnimationFrame(tick);

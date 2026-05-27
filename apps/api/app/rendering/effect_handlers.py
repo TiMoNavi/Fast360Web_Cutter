@@ -339,8 +339,177 @@ def apply_letterbox(frame: Any, t_ms: int, event: FrameEffect) -> Any:
     ).astype(np.uint8)
 
 
+def apply_portal_ring(frame: Any, t_ms: int, event: FrameEffect) -> Any:
+    import numpy as np
+
+    params = event.get("params") or {}
+    progress = effect_progress(event, t_ms)
+    envelope = edge_envelope(event, t_ms, default_edge_ms=140)
+    opacity = clamp(float(params.get("opacity", 0.92)), 0, 1) * envelope
+    if opacity <= 0:
+        return frame
+
+    y, x, center_x, center_y, min_side = overlay_coordinate_grid(frame, params)
+    radius = min_side * clamp(float(params.get("radius", 0.31)), 0.08, 0.72)
+    thickness = max(2.0, min_side * clamp(float(params.get("thickness", 0.035)), 0.008, 0.16))
+    dx = x - center_x
+    dy = y - center_y
+    distance = np.sqrt(dx * dx + dy * dy)
+    angle = np.arctan2(dy, dx)
+    spin = progress * np.pi * 6.0
+
+    ring = np.exp(-np.square((distance - radius) / thickness))
+    outer_glow = np.exp(-np.square((distance - radius * 1.08) / (thickness * 2.8)))
+    inner_glow = np.exp(-np.square((distance - radius * 0.78) / (thickness * 3.4)))
+    spokes = 0.5 + 0.5 * np.sin(angle * 18.0 + spin + distance * 0.055)
+    sparks = np.power(np.maximum(0.0, spokes), 7.0)
+
+    alpha = np.clip((ring * (0.48 + spokes * 0.42) + outer_glow * 0.22 + inner_glow * 0.12 + sparks * ring * 0.36) * opacity, 0, 0.92)
+    core_alpha = np.clip((1.0 - smoothstep(radius * 0.18, radius * 0.72, distance)) * opacity * 0.18, 0, 0.24)
+
+    primary = np.array(parse_hex_color(str(params.get("color", "#00d8ff"))), dtype=np.float32)
+    secondary = np.array(parse_hex_color(str(params.get("secondaryColor", "#ff4dff"))), dtype=np.float32)
+    core = np.array(parse_hex_color(str(params.get("coreColor", "#05061f"))), dtype=np.float32)
+    mix = spokes[:, :, None]
+    overlay = primary * (1.0 - mix) + secondary * mix
+
+    rendered = blend_overlay(frame, core[None, None, :], core_alpha)
+    rendered = blend_overlay(rendered, overlay, alpha)
+    return additive_overlay(rendered, overlay, np.clip(alpha * 0.42 + outer_glow * opacity * 0.18, 0, 0.62))
+
+
+def apply_time_vortex(frame: Any, t_ms: int, event: FrameEffect) -> Any:
+    import numpy as np
+
+    params = event.get("params") or {}
+    progress = effect_progress(event, t_ms)
+    envelope = edge_envelope(event, t_ms, default_edge_ms=180)
+    opacity = clamp(float(params.get("opacity", 0.86)), 0, 1) * envelope
+    if opacity <= 0:
+        return frame
+
+    y, x, center_x, center_y, min_side = overlay_coordinate_grid(frame, params)
+    radius = min_side * clamp(float(params.get("radius", 0.36)), 0.08, 0.82)
+    dx = x - center_x
+    dy = y - center_y
+    distance = np.sqrt(dx * dx + dy * dy)
+    angle = np.arctan2(dy, dx)
+    normalized = distance / max(radius, 1.0)
+
+    body = 1.0 - smoothstep(0.1, 1.08, normalized)
+    spiral = 0.5 + 0.5 * np.sin(angle * 5.6 - normalized * 17.0 + progress * np.pi * 7.0)
+    cross_spiral = 0.5 + 0.5 * np.sin(angle * -3.2 - normalized * 10.0 - progress * np.pi * 5.4)
+    lanes = np.power(spiral, 3.0) * 0.65 + np.power(cross_spiral, 5.0) * 0.35
+    center_dark = 1.0 - smoothstep(0.0, 0.34, normalized)
+    rim = np.exp(-np.square((normalized - 0.86) / 0.11))
+
+    alpha = np.clip((body * (0.24 + lanes * 0.58) + rim * 0.28) * opacity, 0, 0.88)
+    core_alpha = np.clip(center_dark * opacity * 0.3, 0, 0.36)
+
+    primary = np.array(parse_hex_color(str(params.get("color", "#4be3ff"))), dtype=np.float32)
+    secondary = np.array(parse_hex_color(str(params.get("secondaryColor", "#9a4dff"))), dtype=np.float32)
+    core = np.array(parse_hex_color(str(params.get("coreColor", "#02030d"))), dtype=np.float32)
+    mix = np.clip(lanes[:, :, None], 0, 1)
+    overlay = primary * (1.0 - mix) + secondary * mix
+
+    rendered = blend_overlay(frame, core[None, None, :], core_alpha)
+    rendered = blend_overlay(rendered, overlay, alpha)
+    return additive_overlay(rendered, overlay, np.clip((lanes * body + rim) * opacity * 0.24, 0, 0.48))
+
+
+def apply_explosion_sticker(frame: Any, t_ms: int, event: FrameEffect) -> Any:
+    import numpy as np
+
+    params = event.get("params") or {}
+    progress = effect_progress(event, t_ms)
+    opacity = clamp(float(params.get("opacity", 0.95)), 0, 1)
+    if opacity <= 0:
+        return frame
+
+    y, x, center_x, center_y, min_side = overlay_coordinate_grid(frame, params)
+    max_radius = min_side * clamp(float(params.get("radius", 0.34)), 0.08, 0.82)
+    radius = max_radius * (0.12 + 0.96 * ease_out_cubic(progress))
+    thickness = max(3.0, max_radius * (0.065 + progress * 0.07))
+    dx = x - center_x
+    dy = y - center_y
+    distance = np.sqrt(dx * dx + dy * dy)
+    angle = np.arctan2(dy, dx)
+
+    life = np.power(max(0.0, 1.0 - progress), 0.55)
+    ignition = smoothstep(0.0, 0.18, progress)
+    shock = np.exp(-np.square((distance - radius) / thickness))
+    core = np.exp(-np.square(distance / max(radius * 0.62, 1.0)))
+    plume = np.exp(-np.square((distance - radius * 0.58) / max(radius * 0.42, 1.0)))
+    spark_seed = 0.5 + 0.5 * np.sin(angle * 31.0 + progress * 24.0)
+    sparks = np.power(np.maximum(0.0, spark_seed), 11.0) * np.exp(-np.square((distance - radius * 0.92) / max(thickness * 2.2, 1.0)))
+    smoke = plume * smoothstep(0.28, 0.9, progress) * (1.0 - smoothstep(0.72, 1.0, progress))
+
+    fire_alpha = np.clip((core * (1.15 - progress) + shock * 0.76 + sparks * 0.72) * opacity * ignition * life, 0, 0.95)
+    smoke_alpha = np.clip(smoke * opacity * 0.24, 0, 0.28)
+
+    hot = np.array(parse_hex_color(str(params.get("color", "#fff0a0"))), dtype=np.float32)
+    fire = np.array(parse_hex_color(str(params.get("secondaryColor", "#ff6a00"))), dtype=np.float32)
+    ember = np.array(parse_hex_color(str(params.get("emberColor", "#ff1f00"))), dtype=np.float32)
+    smoke_color = np.array(parse_hex_color(str(params.get("smokeColor", "#282018"))), dtype=np.float32)
+    heat = np.clip((core + shock + sparks)[:, :, None], 0, 1)
+    overlay = fire * (1.0 - heat) + hot * heat
+    overlay = overlay * (1.0 - progress * 0.25) + ember * (progress * 0.25)
+
+    rendered = blend_overlay(frame, smoke_color[None, None, :], smoke_alpha)
+    rendered = blend_overlay(rendered, overlay, fire_alpha)
+    return additive_overlay(rendered, overlay, np.clip(fire_alpha * 0.46 + sparks * opacity * 0.32, 0, 0.72))
+
+
 def clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
+
+
+def smoothstep(edge0: float, edge1: float, value: Any) -> Any:
+    t = clamp_array((value - edge0) / max(edge1 - edge0, 1e-6), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def ease_out_cubic(value: float) -> float:
+    t = clamp(value, 0, 1)
+    return 1 - (1 - t) ** 3
+
+
+def clamp_array(value: Any, minimum: float, maximum: float) -> Any:
+    import numpy as np
+
+    return np.minimum(maximum, np.maximum(minimum, value))
+
+
+def overlay_coordinate_grid(frame: Any, params: dict[str, Any]) -> tuple[Any, Any, float, float, float]:
+    import numpy as np
+
+    height, width = frame.shape[:2]
+    center_x = width * clamp(float(params.get("centerX", 0.5)), -0.5, 1.5)
+    center_y = height * clamp(float(params.get("centerY", 0.5)), -0.5, 1.5)
+    y, x = np.ogrid[:height, :width]
+    return y.astype(np.float32), x.astype(np.float32), center_x, center_y, float(min(width, height))
+
+
+def blend_overlay(frame: Any, overlay: Any, alpha: Any) -> Any:
+    import numpy as np
+
+    working = frame.astype(np.float32)
+    alpha_3 = np.clip(alpha, 0, 1)
+    if getattr(alpha_3, "ndim", 0) == 2:
+        alpha_3 = alpha_3[:, :, None]
+    rendered = working * (1.0 - alpha_3) + overlay.astype(np.float32) * alpha_3
+    return np.clip(rendered, 0, 255).astype(np.uint8)
+
+
+def additive_overlay(frame: Any, overlay: Any, alpha: Any) -> Any:
+    import numpy as np
+
+    working = frame.astype(np.float32)
+    alpha_3 = np.clip(alpha, 0, 1)
+    if getattr(alpha_3, "ndim", 0) == 2:
+        alpha_3 = alpha_3[:, :, None]
+    rendered = working + overlay.astype(np.float32) * alpha_3
+    return np.clip(rendered, 0, 255).astype(np.uint8)
 
 
 def shift_channel(channel: Any, dx: int, dy: int) -> Any:

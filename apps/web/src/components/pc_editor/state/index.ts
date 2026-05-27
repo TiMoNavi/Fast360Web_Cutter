@@ -3,6 +3,7 @@ export {
   PcEditorRuntimeStateProvider,
   PcEditorRuntimeStateRoot,
   createPcEditorRuntimeStateStore,
+  getPcEditorFrontendPlaybackRate,
   getPcEditorRuntimeState,
   pcEditorRuntimeStateStore,
   setPcEditorCameraPose,

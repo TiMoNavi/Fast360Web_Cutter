@@ -20,10 +20,16 @@ import {
   screenPointToViewCenter,
   viewCenterToSpherePoint
 } from "../operations/viewGeometry";
-import { isPcMaskCenterFollowKeyPressed } from "./centerFollowKey";
+import {
+  PC_MASK_CENTER_FOLLOW_KEY_CODE,
+  isPcMaskCenterFollowKeyPressed,
+  isPcMaskCenterFollowModeActive,
+  setPcMaskCenterFollowMode,
+  togglePcMaskCenterFollowMode
+} from "./centerFollowKey";
 import { isInteractiveTarget } from "./domTargetGuards";
 import type { PcEdgePanControls } from "./usePcEdgePan";
-import { setPcEditorPointerState } from "../../state";
+import { getPcEditorFrontendPlaybackRate, setPcEditorPointerState } from "../../state";
 import { PC_MASK_BACKGROUND_HIT_ATTRIBUTE } from "../webxr/AFrameMaskBackgroundTarget";
 import { SPATIAL_UI_HIT_ATTRIBUTE, SPATIAL_UI_RAY_ACTIVE_ATTRIBUTE } from "../../3DUI/shared/SpatialUiInteraction";
 
@@ -332,7 +338,8 @@ export function usePcMaskPointerInput({
       return raw;
     }
 
-    const deltaSeconds = Math.min(0.05, Math.max(1 / 120, (now - (state.lastTime ?? now)) / 1000));
+    const frontendRate = getPcEditorFrontendPlaybackRate();
+    const deltaSeconds = Math.min(0.05, Math.max(1 / 120, (now - (state.lastTime ?? now)) / 1000)) * frontendRate;
     state.lastTime = now;
 
     const rawDelta = deltaToCenter(state.filteredCenter, raw);
@@ -375,6 +382,7 @@ export function usePcMaskPointerInput({
 
     const look = centerFollowLookRef.current;
     const lastTime = look.lastTime ?? time;
+    const frontendRate = getPcEditorFrontendPlaybackRate();
     const deltaSeconds = Math.min(0.05, Math.max(1 / 120, (time - lastTime) / 1000));
     look.lastTime = time;
 
@@ -383,7 +391,7 @@ export function usePcMaskPointerInput({
     look.pendingX = 0;
     look.pendingY = 0;
 
-    const alpha = 1 - Math.exp(-deltaSeconds / CENTER_FOLLOW_LOOK_RESPONSE_SECONDS);
+    const alpha = 1 - Math.exp(-deltaSeconds / (CENTER_FOLLOW_LOOK_RESPONSE_SECONDS / frontendRate));
     look.filteredX += (rawX - look.filteredX) * alpha;
     look.filteredY += (rawY - look.filteredY) * alpha;
 
@@ -399,8 +407,8 @@ export function usePcMaskPointerInput({
     const stepY = look.filteredY * scale;
     const current = viewCenterFromCameraState();
     const nextCamera = normalizeViewCenter({
-      pitch: clampNumber(current.pitch - stepY * VIEW_DRAG_PITCH_PER_PX, -70, 70),
-      yaw: current.yaw + stepX * VIEW_DRAG_YAW_PER_PX
+      pitch: clampNumber(current.pitch - stepY * VIEW_DRAG_PITCH_PER_PX * frontendRate, -70, 70),
+      yaw: current.yaw + stepX * VIEW_DRAG_YAW_PER_PX * frontendRate
     });
 
     queueCenterFollowCameraCenter(nextCamera);
@@ -499,6 +507,9 @@ export function usePcMaskPointerInput({
     cancelCenterFollow();
     clearCenterFollowLook();
     releaseCenterFollowPointerLock();
+    if (isPcMaskCenterFollowModeActive()) {
+      hideCenterFollowCursor();
+    }
     centerFollowClickBlockUntilRef.current = performance.now() + 450;
     edgePan.stopEdgePan();
     setMaskDragging(false);
@@ -520,6 +531,7 @@ export function usePcMaskPointerInput({
     const tick = (time: number) => {
       const active = maskDragSmoothRef.current;
       const lastTime = active.lastTime ?? time;
+      const frontendRate = getPcEditorFrontendPlaybackRate();
       const deltaSeconds = Math.min(0.05, Math.max(0, (time - lastTime) / 1000));
       active.lastTime = time;
 
@@ -532,10 +544,10 @@ export function usePcMaskPointerInput({
         return;
       }
 
-      const alpha = 1 - Math.exp(-deltaSeconds / MASK_DRAG_SMOOTH_RESPONSE_SECONDS);
+      const alpha = 1 - Math.exp(-deltaSeconds / (MASK_DRAG_SMOOTH_RESPONSE_SECONDS / frontendRate));
       const maxStep = Math.max(
         MASK_DRAG_SETTLE_EPSILON_DEG,
-        MASK_DRAG_MAX_SMOOTH_SPEED_DEG_PER_SECOND * Math.max(deltaSeconds, 1 / 120)
+        MASK_DRAG_MAX_SMOOTH_SPEED_DEG_PER_SECOND * frontendRate * Math.max(deltaSeconds, 1 / 120)
       );
       const stepScale = Math.min(alpha, maxStep / remaining, 1);
       const stepYaw = active.pendingYaw * stepScale;
@@ -567,6 +579,9 @@ export function usePcMaskPointerInput({
     cancelSmoothMaskDrag();
     clearCenterFollowLook();
     releaseCenterFollowPointerLock();
+    if (isPcMaskCenterFollowModeActive()) {
+      hideCenterFollowCursor();
+    }
     mask.stopMotion();
     edgePan.stopEdgePan();
     setMaskDragging(false);
@@ -577,6 +592,7 @@ export function usePcMaskPointerInput({
   };
 
   useEffect(() => () => {
+    setPcMaskCenterFollowMode(false);
     cancelCenterFollow();
     cancelSmoothMaskDrag();
     clearCenterFollowLook();
@@ -609,41 +625,52 @@ export function usePcMaskPointerInput({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "KeyV" || isEditableKeyboardTarget(event.target)) {
+      if (event.code !== PC_MASK_CENTER_FOLLOW_KEY_CODE || event.repeat || isEditableKeyboardTarget(event.target)) {
         return;
       }
 
-      hideCenterFollowCursor();
-    };
+      event.preventDefault();
+      const active = togglePcMaskCenterFollowMode();
 
-    const handleKeyUp = (event: KeyboardEvent) => {
-      if (event.code !== "KeyV") {
+      if (active) {
+        hideCenterFollowCursor();
         return;
       }
 
-      if (endCenterFollow()) {
-        return;
+      if (!endCenterFollow()) {
+        clearCenterFollowLook();
+        releaseCenterFollowPointerLock();
       }
-
-      restoreCenterFollowCursor();
     };
 
     const handlePointerLockChange = () => {
       if (document.pointerLockElement !== centerFollowLookRef.current.stageElement && stagePointerRef.current?.mode !== "center-follow") {
-        restoreCenterFollowCursor();
+        if (isPcMaskCenterFollowModeActive()) {
+          hideCenterFollowCursor();
+        } else {
+          restoreCenterFollowCursor();
+        }
+      }
+    };
+
+    const handleBlur = () => {
+      setPcMaskCenterFollowMode(false);
+      if (!endCenterFollow()) {
+        clearCenterFollowLook();
+        releaseCenterFollowPointerLock();
       }
     };
 
     window.addEventListener("mousemove", handleMouseMove, true);
     window.addEventListener("mouseup", handleMouseUp, true);
     window.addEventListener("keydown", handleKeyDown, true);
-    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("blur", handleBlur);
     document.addEventListener("pointerlockchange", handlePointerLockChange);
     return () => {
       window.removeEventListener("mousemove", handleMouseMove, true);
       window.removeEventListener("mouseup", handleMouseUp, true);
       window.removeEventListener("keydown", handleKeyDown, true);
-      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("blur", handleBlur);
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
     };
   }, []);
@@ -687,7 +714,7 @@ export function usePcMaskPointerInput({
       if (event.shiftKey) {
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
-        mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 1000);
+        mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 1000 / getPcEditorFrontendPlaybackRate());
         return;
       }
 
@@ -780,9 +807,10 @@ export function usePcMaskPointerInput({
         event.preventDefault();
         maskDragPointerRef.current = { x: event.clientX, y: event.clientY };
         const current = cameraLookRef.current ?? { pitch: 0, yaw: 0 };
+        const frontendRate = getPcEditorFrontendPlaybackRate();
         const nextCamera = {
-          pitch: current.pitch - deltaY * VIEW_DRAG_PITCH_PER_PX,
-          yaw: current.yaw + deltaX * VIEW_DRAG_YAW_PER_PX
+          pitch: current.pitch - deltaY * VIEW_DRAG_PITCH_PER_PX * frontendRate,
+          yaw: current.yaw + deltaX * VIEW_DRAG_YAW_PER_PX * frontendRate
         };
         setCameraCenter(nextCamera, { commit: false, phase: "change" });
         return;
@@ -822,9 +850,10 @@ export function usePcMaskPointerInput({
 
       if (Math.abs(excessX) > 1 || Math.abs(excessY) > 1) {
         const current = cameraLookRef.current ?? { pitch: 0, yaw: 0 };
+        const frontendRate = getPcEditorFrontendPlaybackRate();
         setCameraCenter({
-          pitch: current.pitch - excessY * MASK_DRAG_CAMERA_SPEED_PER_PX,
-          yaw: current.yaw + excessX * MASK_DRAG_CAMERA_SPEED_PER_PX
+          pitch: current.pitch - excessY * MASK_DRAG_CAMERA_SPEED_PER_PX * frontendRate,
+          yaw: current.yaw + excessX * MASK_DRAG_CAMERA_SPEED_PER_PX * frontendRate
         });
       }
 
@@ -914,7 +943,7 @@ export function usePcMaskPointerInput({
         },
         primaryDown: false
       });
-      mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 520);
+      mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 520 / getPcEditorFrontendPlaybackRate());
     },
     stopMaskPointerDrag
   };

@@ -623,10 +623,10 @@ export function SpatialHoldRingMenuDemo() {
     createElement("a-text", {
       align: "center",
       baseline: "center",
-      color: step >= 6 ? COLORS.orange : COLORS.cyan,
+      color: COLORS.white,
       font: "exo2bold",
       letterSpacing: 1.8,
-      material: `shader: msdf; emissive: ${step >= 6 ? COLORS.orange : COLORS.cyan}; emissiveIntensity: 0.58`,
+      material: `shader: msdf; emissive: ${COLORS.white}; emissiveIntensity: 0.58`,
       opacity: fadeOpacity,
       position: "0 -0.58 0.03",
       scale: "0.093 0.093 0.093",

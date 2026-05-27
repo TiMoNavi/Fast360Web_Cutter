@@ -2,6 +2,7 @@
 
 import { createElement } from "react";
 import { verticalFovFromHorizontal } from "../viewFov";
+import { getPcEditorFrontendPlaybackRate } from "../state";
 
 export const WEBXR_CROP_MASK_CHANGE_EVENT = "webxr:crop-mask-change";
 export const WEBXR_CROP_MASK_CENTER_EVENT = "webxr:crop-mask-center";
@@ -656,7 +657,7 @@ export function registerAFrameCropViewportMaskComponents() {
       if (uniforms) {
         uniforms.uTime.value = time;
         if (this.opacityAnimation) {
-          const elapsed = performance.now() - this.opacityAnimation.startedAt;
+          const elapsed = (performance.now() - this.opacityAnimation.startedAt) * getPcEditorFrontendPlaybackRate();
           const progress = clamp(elapsed / Math.max(this.opacityAnimation.durationMs, 1), 0, 1);
           const eased = progress * progress * (3 - 2 * progress);
           this.opacityValue = this.opacityAnimation.from + (this.opacityAnimation.to - this.opacityAnimation.from) * eased;

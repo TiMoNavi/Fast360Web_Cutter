@@ -2,6 +2,7 @@ import { defaultPcEditorBindings } from "../bindings";
 import type { PcEditorBinding } from "../bindings";
 
 const disabledPlayerV2KeyboardBindingIds = new Set([
+  "timeline.discard.end.keyboard",
   "viewport.fov.decrease.keyboard",
   "viewport.fov.increase.keyboard",
   "viewport.pitch.decrease.keyboard",

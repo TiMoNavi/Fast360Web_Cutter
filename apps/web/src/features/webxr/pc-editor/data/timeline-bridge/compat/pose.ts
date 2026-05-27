@@ -34,15 +34,54 @@ function vectorToPose(direction: Vector3Like, input: ViewInputSource): ViewTarge
   };
 }
 
+type DirectionTarget = Vector3Like & {
+  normalize: () => DirectionTarget;
+  set: (x: number, y: number, z: number) => DirectionTarget;
+};
+
+type AFrameThreeGlobal = typeof globalThis & {
+  AFRAME?: {
+    THREE?: {
+      Vector3?: new () => DirectionTarget;
+    };
+  };
+};
+
+function createDirectionTarget(): DirectionTarget {
+  const Vector3Constructor = (globalThis as AFrameThreeGlobal).AFRAME?.THREE?.Vector3;
+
+  if (Vector3Constructor) {
+    return new Vector3Constructor();
+  }
+
+  return {
+    x: 0,
+    y: 0,
+    z: -1,
+    normalize() {
+      const length = Math.hypot(this.x, this.y, this.z) || 1;
+      this.x /= length;
+      this.y /= length;
+      this.z /= length;
+      return this;
+    },
+    set(x: number, y: number, z: number) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+      return this;
+    }
+  };
+}
+
 function readWorldDirection(entityEl: AFrameEntityLike | null): Vector3Like | null {
-  const direction = { x: 0, y: 0, z: -1 };
   const getWorldDirection = entityEl?.object3D?.getWorldDirection;
 
   if (!getWorldDirection) {
     return null;
   }
 
-  return getWorldDirection.call(entityEl.object3D, direction);
+  return getWorldDirection.call(entityEl.object3D, createDirectionTarget());
 }
 
 export function readHeadsetPose(cameraEl: AFrameEntityLike | null): ViewTargetPose | null {

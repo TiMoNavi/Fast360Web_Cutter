@@ -11,6 +11,7 @@ import {
 } from "../shared/SpatialPlayerLayout";
 import {
   SPATIAL_UI_HIT_ATTRIBUTE,
+  SPATIAL_UI_HIT_RENDER_ORDER,
   SPATIAL_UI_RENDER_ORDER,
   flatEmissiveMaterial,
   transparentHitMaterial,
@@ -38,8 +39,16 @@ type AFrameSceneElement = HTMLElement & {
 type PopupControlState = {
   close?: "hover" | "idle" | "pressed";
   clickedSourceId?: string | null;
+  down?: "hover" | "idle" | "pressed";
   hoveredSourceId?: string | null;
   pressedSourceId?: string | null;
+  up?: "hover" | "idle" | "pressed";
+};
+
+type PlaylistThumbnailCacheEntry = {
+  image: HTMLImageElement;
+  listeners: Set<() => void>;
+  status: "error" | "loaded" | "loading";
 };
 
 export type SpatialPlaylistPopupProps = {
@@ -73,6 +82,13 @@ const WHITE = "#f7ffff";
 const MUTED = "#a8efff";
 const DEEP = "#070011";
 const DANGER = "#ff5b8a";
+const thumbnailCache = new Map<string, PlaylistThumbnailCacheEntry>();
+const POPUP_RAY_BLOCKER_LAYER_Z = 0.034;
+const POPUP_CONTROL_HIT_LAYER_Z = 0.056;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
 
 function createTextureCanvas(id: string) {
   const existing = document.getElementById(id) as HTMLCanvasElement | null;
@@ -88,6 +104,42 @@ function createTextureCanvas(id: string) {
   canvas.width = CANVAS_WIDTH;
   document.body.appendChild(canvas);
   return canvas;
+}
+
+function ensureThumbnail(url: string, onUpdate?: () => void) {
+  const cached = thumbnailCache.get(url);
+
+  if (cached) {
+    if (onUpdate && cached.status === "loading") {
+      cached.listeners.add(onUpdate);
+    }
+    return cached;
+  }
+
+  const image = new Image();
+  const entry: PlaylistThumbnailCacheEntry = {
+    image,
+    listeners: new Set(onUpdate ? [onUpdate] : []),
+    status: "loading"
+  };
+  const notify = () => {
+    entry.listeners.forEach((listener) => listener());
+    entry.listeners.clear();
+  };
+
+  image.crossOrigin = "anonymous";
+  image.decoding = "async";
+  image.onload = () => {
+    entry.status = "loaded";
+    notify();
+  };
+  image.onerror = () => {
+    entry.status = "error";
+    notify();
+  };
+  image.src = url;
+  thumbnailCache.set(url, entry);
+  return entry;
 }
 
 function setupCanvas(canvas: HTMLCanvasElement) {
@@ -149,7 +201,7 @@ function drawLabel(
     size?: number;
   } = {}
 ) {
-  const color = options.color ?? WHITE;
+  const color = WHITE;
   context.save();
   context.font = options.font ?? `700 ${options.size ?? 22}px "Share Tech Mono", Consolas, monospace`;
   context.textAlign = options.align ?? "left";
@@ -198,6 +250,50 @@ function splitTitleLines(context: CanvasRenderingContext2D, value: string, maxWi
   }
 
   return rest ? [firstLine, truncateText(context, rest, maxWidth)] : [firstLine];
+}
+
+function drawThumbnailImage(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  cut = 16
+) {
+  const imageWidth = image.naturalWidth || image.width;
+  const imageHeight = image.naturalHeight || image.height;
+
+  if (!imageWidth || !imageHeight) {
+    return false;
+  }
+
+  const sourceAspect = imageWidth / imageHeight;
+  const targetAspect = width / height;
+  let sourceWidth = imageWidth;
+  let sourceHeight = imageHeight;
+  let sourceX = 0;
+  let sourceY = 0;
+
+  if (sourceAspect > targetAspect) {
+    sourceWidth = imageHeight * targetAspect;
+    sourceX = (imageWidth - sourceWidth) / 2;
+  } else {
+    sourceHeight = imageWidth / targetAspect;
+    sourceY = (imageHeight - sourceHeight) / 2;
+  }
+
+  context.save();
+  cutRectPath(context, x, y, width, height, cut);
+  context.clip();
+  try {
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, x, y, width, height);
+  } catch {
+    context.restore();
+    return false;
+  }
+  context.restore();
+  return true;
 }
 
 function formatDuration(ms?: number) {
@@ -275,6 +371,7 @@ function drawControlLayer(
   canvas: HTMLCanvasElement,
   sources: SpatialVideoSource[],
   activeSourceId: string,
+  visibleOffset: number,
   maxItems: number,
   controlState: PopupControlState = {}
 ) {
@@ -283,7 +380,7 @@ function drawControlLayer(
     return;
   }
 
-  const visibleSources = sources.slice(0, maxItems);
+  const visibleSources = sources.slice(visibleOffset, visibleOffset + maxItems);
   const itemX = 28;
   const itemWidth = CANVAS_WIDTH - 56;
   const itemHeight = 204;
@@ -296,7 +393,7 @@ function drawControlLayer(
     const hovered = source.id === controlState.hoveredSourceId;
     const pressed = source.id === controlState.pressedSourceId;
     const y = startY + index * (itemHeight + itemGap);
-    const accent = active ? CYAN : index % 3 === 1 ? MAGENTA : ORANGE;
+    const accent = active ? CYAN : (visibleOffset + index) % 3 === 1 ? MAGENTA : ORANGE;
 
     cutRectPath(context, itemX, y, itemWidth, itemHeight, 22);
     const itemFill = context.createLinearGradient(itemX, y, itemX + itemWidth, y + itemHeight);
@@ -315,11 +412,23 @@ function drawControlLayer(
     const thumbX = itemX + 14;
     const thumbY = y + 18;
     cutRectPath(context, thumbX, thumbY, 168, 168, 16);
-    const thumbFill = context.createLinearGradient(thumbX, thumbY, thumbX + 168, thumbY + 168);
-    thumbFill.addColorStop(0, `${accent}cc`);
-    thumbFill.addColorStop(1, "rgba(255,153,0,0.48)");
-    context.fillStyle = thumbFill;
-    context.fill();
+    let thumbnailDrawn = false;
+
+    if (source.thumbnailUrl) {
+      const thumbnail = thumbnailCache.get(source.thumbnailUrl);
+
+      if (thumbnail?.status === "loaded") {
+        thumbnailDrawn = drawThumbnailImage(context, thumbnail.image, thumbX, thumbY, 168, 168, 16);
+      }
+    }
+
+    if (!thumbnailDrawn) {
+      const thumbFill = context.createLinearGradient(thumbX, thumbY, thumbX + 168, thumbY + 168);
+      thumbFill.addColorStop(0, `${accent}cc`);
+      thumbFill.addColorStop(1, "rgba(255,153,0,0.48)");
+      context.fillStyle = thumbFill;
+      context.fill();
+    }
     context.strokeStyle = active ? DEEP : accent;
     context.lineWidth = 2;
     context.stroke();
@@ -349,12 +458,37 @@ function drawControlLayer(
     context.stroke();
     context.restore();
   }
+
+  const navItems: Array<{ key: "down" | "up"; x: number; y: number; label: string }> = [
+    { key: "up", label: "UP", x: CANVAS_WIDTH - 166, y: 118 },
+    { key: "down", label: "DOWN", x: CANVAS_WIDTH - 102, y: 118 }
+  ];
+
+  navItems.forEach((item) => {
+    const state = controlState[item.key];
+
+    if (state !== "hover" && state !== "pressed") {
+      return;
+    }
+
+    context.save();
+    cutRectPath(context, item.x - 30, item.y - 18, 60, 36, 8);
+    context.fillStyle = state === "pressed" ? "rgba(255,153,0,0.28)" : "rgba(0,255,255,0.2)";
+    context.shadowColor = state === "pressed" ? ORANGE : CYAN;
+    context.shadowBlur = 18;
+    context.fill();
+    context.strokeStyle = WHITE;
+    context.lineWidth = 1.5;
+    context.stroke();
+    context.restore();
+  });
 }
 
 function drawTextLayer(
   canvas: HTMLCanvasElement,
   sources: SpatialVideoSource[],
   activeSourceId: string,
+  visibleOffset: number,
   maxItems: number,
   message?: string,
   status: "error" | "ready" | "switching" = "ready"
@@ -371,11 +505,13 @@ function drawTextLayer(
   drawLabel(context, message ?? "Visual playlist preview. Backend switching is disabled in this pass.", 54, 118, {
     color: statusColor,
     size: 17,
-    maxWidth: CANVAS_WIDTH - 150
+    maxWidth: CANVAS_WIDTH - 250
   });
+  drawLabel(context, "UP", CANVAS_WIDTH - 166, 118, { align: "center", color: WHITE, size: 15 });
+  drawLabel(context, "DOWN", CANVAS_WIDTH - 102, 118, { align: "center", color: WHITE, size: 15 });
   drawLabel(context, "X", CANVAS_WIDTH - 54, 118, { align: "center", color: WHITE, size: 22 });
 
-  const visibleSources = sources.slice(0, maxItems);
+  const visibleSources = sources.slice(visibleOffset, visibleOffset + maxItems);
   const itemX = 28;
   const itemHeight = 204;
   const itemGap = 24;
@@ -384,12 +520,12 @@ function drawTextLayer(
   visibleSources.forEach((source, index) => {
     const active = source.id === activeSourceId;
     const y = startY + index * (itemHeight + itemGap);
-    const textColor = active ? DEEP : WHITE;
-    const metaColor = active ? "rgba(7,0,17,0.72)" : MUTED;
+    const textColor = WHITE;
+    const metaColor = WHITE;
 
     drawLabel(context, source.kind.toUpperCase(), itemX + 98, y + 158, {
       align: "center",
-      color: active ? DEEP : DEEP,
+      color: WHITE,
       shadow: false,
       size: 18
     });
@@ -416,7 +552,7 @@ function drawTextLayer(
     });
 
     if (active) {
-      drawLabel(context, "ACTIVE", CANVAS_WIDTH - 38, y + 174, { align: "right", color: DEEP, shadow: false, size: 16 });
+      drawLabel(context, "ACTIVE", CANVAS_WIDTH - 38, y + 174, { align: "right", color: WHITE, shadow: false, size: 16 });
     }
   });
 }
@@ -431,8 +567,10 @@ function popupControlStateEquals(left: PopupControlState, right: PopupControlSta
   return (
     left.close === right.close &&
     (left.clickedSourceId ?? null) === (right.clickedSourceId ?? null) &&
+    left.down === right.down &&
     (left.hoveredSourceId ?? null) === (right.hoveredSourceId ?? null) &&
-    (left.pressedSourceId ?? null) === (right.pressedSourceId ?? null)
+    (left.pressedSourceId ?? null) === (right.pressedSourceId ?? null) &&
+    left.up === right.up
   );
 }
 
@@ -468,9 +606,41 @@ function CloseHitPlane({
     "data-testid": "spatial-playlist-close-hit",
     height: "0.075",
     material: transparentHitMaterial(CYAN),
-    position: `${POPUP_WORLD_WIDTH / 2 - 0.074} ${POPUP_WORLD_HEIGHT / 2 - 0.118} 0.046`,
+    position: `${POPUP_WORLD_WIDTH / 2 - 0.074} ${POPUP_WORLD_HEIGHT / 2 - 0.118} ${POPUP_CONTROL_HIT_LAYER_Z}`,
+    renderOrder: SPATIAL_UI_HIT_RENDER_ORDER,
     ref,
     width: "0.075"
+  });
+}
+
+function NavHitPlane({
+  disabled,
+  direction,
+  onClick,
+  onState
+}: {
+  disabled?: boolean;
+  direction: "down" | "up";
+  onClick: () => void;
+  onState: (state: "hover" | "idle" | "pressed") => void;
+}) {
+  const ref = useSpatialButtonEvents({
+    onClick: disabled ? undefined : onClick,
+    onState
+  });
+  const x = direction === "up" ? POPUP_WORLD_WIDTH / 2 - 0.166 : POPUP_WORLD_WIDTH / 2 - 0.102;
+
+  return createElement("a-plane", {
+    className: "clickable",
+    "data-ray-blocking": "true",
+    [SPATIAL_UI_HIT_ATTRIBUTE]: "true",
+    "data-testid": `spatial-playlist-${direction}-hit`,
+    height: "0.052",
+    material: transparentHitMaterial(WHITE),
+    position: `${x} ${POPUP_WORLD_HEIGHT / 2 - 0.118} ${POPUP_CONTROL_HIT_LAYER_Z}`,
+    renderOrder: SPATIAL_UI_HIT_RENDER_ORDER,
+    ref,
+    width: "0.07"
   });
 }
 
@@ -502,7 +672,8 @@ function SourceHitPlane({
     "data-testid": `spatial-playlist-source-hit-${index}`,
     height: String(itemWorldHeight),
     material: transparentHitMaterial(WHITE),
-    position: `0 ${itemWorldY} 0.052`,
+    position: `0 ${itemWorldY} ${POPUP_CONTROL_HIT_LAYER_Z}`,
+    renderOrder: SPATIAL_UI_HIT_RENDER_ORDER,
     ref,
     width: String(itemWorldWidth)
   });
@@ -518,7 +689,8 @@ function PopupRayBlocker() {
     "data-testid": "spatial-playlist-ray-blocker",
     height: String(POPUP_WORLD_HEIGHT),
     material: transparentHitMaterial(WHITE),
-    position: "0 0 0.04",
+    position: `0 0 ${POPUP_RAY_BLOCKER_LAYER_Z}`,
+    renderOrder: SPATIAL_UI_HIT_RENDER_ORDER,
     ref,
     width: String(POPUP_WORLD_WIDTH)
   });
@@ -544,7 +716,21 @@ export function SpatialPlaylistPopup({
   });
   const [texturesReady, setTexturesReady] = useState(false);
   const [controlState, setControlState] = useState<PopupControlState>({});
+  const [playlistOffset, setPlaylistOffset] = useState(0);
+  const [thumbnailVersion, setThumbnailVersion] = useState(0);
   const clickTimerRef = useRef<number | null>(null);
+  const maxOffset = Math.max(0, sources.length - maxItems);
+  const visibleOffset = clamp(playlistOffset, 0, maxOffset);
+  const visibleSources = sources.slice(visibleOffset, visibleOffset + maxItems);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const activeIndex = Math.max(0, sources.findIndex((source) => source.id === activeSourceId));
+    setPlaylistOffset(clamp(activeIndex - 1, 0, Math.max(0, sources.length - maxItems)));
+  }, [activeSourceId, maxItems, open, sources]);
 
   useEffect(() => {
     if (!open) {
@@ -558,8 +744,8 @@ export function SpatialPlaylistPopup({
     const textCanvas = createTextureCanvas(TEXTURE_IDS.text);
 
     drawBaseLayer(baseCanvas);
-    drawControlLayer(controlCanvas, sources, activeSourceId, maxItems, controlState);
-    drawTextLayer(textCanvas, sources, activeSourceId, maxItems, message, status);
+    setupCanvas(controlCanvas);
+    setupCanvas(textCanvas);
     setTexturesReady(true);
 
     return () => {
@@ -567,7 +753,62 @@ export function SpatialPlaylistPopup({
       controlCanvas.remove();
       textCanvas.remove();
     };
-  }, [activeSourceId, controlState, maxItems, message, open, sources, status]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    let active = true;
+    const refreshThumbnails = () => {
+      if (active) {
+        setThumbnailVersion((value) => value + 1);
+      }
+    };
+
+    visibleSources.forEach((source) => {
+      if (source.thumbnailUrl) {
+        ensureThumbnail(source.thumbnailUrl, refreshThumbnails);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [maxItems, open, sources, visibleOffset]);
+
+  useEffect(() => {
+    if (!texturesReady) {
+      return;
+    }
+
+    const controlCanvas = document.getElementById(TEXTURE_IDS.controls) as HTMLCanvasElement | null;
+    if (!controlCanvas) {
+      return;
+    }
+
+    drawControlLayer(controlCanvas, sources, activeSourceId, visibleOffset, maxItems, controlState);
+    window.requestAnimationFrame(() => {
+      markTextureDirty(controlPlaneRef.current);
+    });
+  }, [activeSourceId, controlState, maxItems, sources, texturesReady, thumbnailVersion, visibleOffset]);
+
+  useEffect(() => {
+    if (!texturesReady) {
+      return;
+    }
+
+    const textCanvas = document.getElementById(TEXTURE_IDS.text) as HTMLCanvasElement | null;
+    if (!textCanvas) {
+      return;
+    }
+
+    drawTextLayer(textCanvas, sources, activeSourceId, visibleOffset, maxItems, message, status);
+    window.requestAnimationFrame(() => {
+      markTextureDirty(textPlaneRef.current);
+    });
+  }, [activeSourceId, maxItems, message, sources, status, texturesReady, visibleOffset]);
 
   useEffect(
     () => () => {
@@ -670,7 +911,19 @@ export function SpatialPlaylistPopup({
         width: String(POPUP_WORLD_WIDTH)
       }),
       createElement(PopupRayBlocker),
-      ...sources.slice(0, maxItems).map((source, index) =>
+      createElement(NavHitPlane, {
+        direction: "up",
+        disabled: visibleOffset <= 0,
+        onClick: () => setPlaylistOffset((value) => clamp(value - 1, 0, maxOffset)),
+        onState: (state) => setControlState((value) => updatePopupControlState(value, { up: state }))
+      }),
+      createElement(NavHitPlane, {
+        direction: "down",
+        disabled: visibleOffset >= maxOffset,
+        onClick: () => setPlaylistOffset((value) => clamp(value + 1, 0, maxOffset)),
+        onState: (state) => setControlState((value) => updatePopupControlState(value, { down: state }))
+      }),
+      ...visibleSources.map((source, index) =>
         createElement(SourceHitPlane, {
           index,
           key: source.id,

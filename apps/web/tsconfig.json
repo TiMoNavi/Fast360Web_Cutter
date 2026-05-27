@@ -36,7 +36,8 @@
     ".next-quest-product-3036/types/**/*.ts",
     ".next-webxr-crop-test/types/**/*.ts",
     ".next/types/**/*.ts",
-    "next-env.d.ts"
+    "next-env.d.ts",
+    ".next-public-tunnel/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

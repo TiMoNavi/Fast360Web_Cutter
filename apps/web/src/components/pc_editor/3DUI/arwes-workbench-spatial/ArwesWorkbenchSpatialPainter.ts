@@ -98,12 +98,14 @@ function fillSection(context: CanvasRenderingContext2D, x: number, y: number, wi
 }
 
 function drawLabel(context: CanvasRenderingContext2D, label: string, x: number, y: number, color = MUTED, size = 20, align: CanvasTextAlign = "left") {
+  const textColor = WHITE;
+
   context.save();
   context.font = `700 ${size}px "Share Tech Mono", Consolas, monospace`;
   context.textAlign = align;
   context.textBaseline = "middle";
-  context.fillStyle = color;
-  context.shadowColor = color;
+  context.fillStyle = textColor;
+  context.shadowColor = textColor;
   context.shadowBlur = 8;
   context.fillText(label, x, y);
   context.restore();

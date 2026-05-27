@@ -11,6 +11,7 @@ import {
   type PcMotionConfig,
   type PcMotionVector
 } from "./operations/motionSmoothing";
+import { getPcEditorFrontendPlaybackRate } from "../state";
 
 export type PcViewCenter = {
   pitch: number;
@@ -141,7 +142,7 @@ export const PcTrajectoryRippleCorrector = forwardRef<PcTrajectoryRippleCorrecto
         }
 
         const lastTime = lastTimeRef.current ?? time;
-        const deltaSeconds = Math.min(0.05, Math.max(0, (time - lastTime) / 1000));
+        const deltaSeconds = Math.min(0.05, Math.max(0, (time - lastTime) / 1000)) * getPcEditorFrontendPlaybackRate();
         lastTimeRef.current = time;
         const cameraStep = active.emitCamera
           ? stepTowardTarget({

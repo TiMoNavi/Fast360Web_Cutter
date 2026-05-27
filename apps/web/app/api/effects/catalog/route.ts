@@ -168,6 +168,42 @@ const effects = [
     params: { opacity: 1, ratio: 0.12 },
     previewTarget: "viewport-mask",
     renderStage: "overlay_frame"
+  }),
+  effect({
+    categoryId: "overlay",
+    durationMs: 1800,
+    effectId: "portal-ring",
+    eventName: "overlay.portal_ring",
+    family: "overlay",
+    key: "3",
+    label: "Portal ring",
+    params: { color: "#00d8ff", coreColor: "#05061f", opacity: 0.92, radius: 0.31, secondaryColor: "#ff4dff", thickness: 0.035 },
+    previewTarget: "viewport-mask",
+    renderStage: "overlay_frame"
+  }),
+  effect({
+    categoryId: "overlay",
+    durationMs: 2200,
+    effectId: "time-vortex",
+    eventName: "overlay.time_vortex",
+    family: "overlay",
+    key: "4",
+    label: "Time vortex",
+    params: { color: "#4be3ff", coreColor: "#02030d", opacity: 0.86, radius: 0.36, secondaryColor: "#9a4dff" },
+    previewTarget: "viewport-mask",
+    renderStage: "overlay_frame"
+  }),
+  effect({
+    categoryId: "overlay",
+    durationMs: 900,
+    effectId: "explosion-sticker",
+    eventName: "overlay.explosion_sticker",
+    family: "overlay",
+    key: "5",
+    label: "Explosion sticker",
+    params: { color: "#fff0a0", emberColor: "#ff1f00", opacity: 0.95, radius: 0.34, secondaryColor: "#ff6a00", smokeColor: "#282018" },
+    previewTarget: "viewport-mask",
+    renderStage: "overlay_frame"
   })
 ];
 
@@ -231,6 +267,45 @@ const dollyZoomEffect = effect({
   renderStage: "viewport_path"
 });
 
+const overlayStickerEffects = [
+  effect({
+    categoryId: "overlay",
+    durationMs: 1800,
+    effectId: "portal-ring",
+    eventName: "overlay.portal_ring",
+    family: "overlay",
+    key: "3",
+    label: "Portal ring",
+    params: { color: "#00d8ff", coreColor: "#05061f", opacity: 0.92, radius: 0.31, secondaryColor: "#ff4dff", thickness: 0.035 },
+    previewTarget: "viewport-mask",
+    renderStage: "overlay_frame"
+  }),
+  effect({
+    categoryId: "overlay",
+    durationMs: 2200,
+    effectId: "time-vortex",
+    eventName: "overlay.time_vortex",
+    family: "overlay",
+    key: "4",
+    label: "Time vortex",
+    params: { color: "#4be3ff", coreColor: "#02030d", opacity: 0.86, radius: 0.36, secondaryColor: "#9a4dff" },
+    previewTarget: "viewport-mask",
+    renderStage: "overlay_frame"
+  }),
+  effect({
+    categoryId: "overlay",
+    durationMs: 900,
+    effectId: "explosion-sticker",
+    eventName: "overlay.explosion_sticker",
+    family: "overlay",
+    key: "5",
+    label: "Explosion sticker",
+    params: { color: "#fff0a0", emberColor: "#ff1f00", opacity: 0.95, radius: 0.34, secondaryColor: "#ff6a00", smokeColor: "#282018" },
+    previewTarget: "viewport-mask",
+    renderStage: "overlay_frame"
+  })
+];
+
 const fallbackCatalog = {
   catalogVersion: 1,
   categories,
@@ -249,6 +324,7 @@ function withLittlePlanetFallback(catalog: unknown) {
   let hasCrystalBall = false;
   let hasLookAround = false;
   let hasDollyZoom = false;
+  const missingOverlayStickerEffects = new Map(overlayStickerEffects.map((item) => [item.id, item]));
   const nextEffects = catalogEffects.map((item) => {
     if (!item || typeof item !== "object") {
       return item;
@@ -384,6 +460,10 @@ function withLittlePlanetFallback(catalog: unknown) {
       };
     }
 
+    if (typeof item.id === "string" && missingOverlayStickerEffects.has(item.id)) {
+      missingOverlayStickerEffects.delete(item.id);
+    }
+
     return item;
   });
 
@@ -399,6 +479,7 @@ function withLittlePlanetFallback(catalog: unknown) {
   if (!hasDollyZoom) {
     nextEffects.push(dollyZoomEffect);
   }
+  nextEffects.push(...missingOverlayStickerEffects.values());
 
   return {
     ...fallbackCatalog,

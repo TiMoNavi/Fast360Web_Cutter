@@ -5,7 +5,7 @@ import type { PcMaskOperations } from "../operations/maskOperations";
 import type { PcViewCenter } from "../PcTrajectoryRippleCorrector";
 import { PC_MASK_BACKGROUND_HIT_ATTRIBUTE } from "../webxr/AFrameMaskBackgroundTarget";
 import { directionToViewCenter } from "../operations/viewGeometry";
-import { getPcEditorRuntimeState } from "../../state";
+import { getPcEditorFrontendPlaybackRate, getPcEditorRuntimeState } from "../../state";
 import { isPcMaskCenterFollowKeyPressed } from "./centerFollowKey";
 import { SPATIAL_UI_HIT_ATTRIBUTE, SPATIAL_UI_RAY_ACTIVE_ATTRIBUTE } from "../../3DUI/shared/SpatialUiInteraction";
 
@@ -13,6 +13,23 @@ type Vector3Like = {
   x: number;
   y: number;
   z: number;
+};
+
+type DirectionTarget = Vector3Like & {
+  normalize: () => DirectionTarget;
+  set: (x: number, y: number, z: number) => DirectionTarget;
+};
+
+type PositionTarget = Vector3Like & {
+  setFromMatrixPosition?: (matrix: unknown) => PositionTarget;
+};
+
+type AFrameThreeGlobal = typeof globalThis & {
+  AFRAME?: {
+    THREE?: {
+      Vector3?: new () => DirectionTarget & PositionTarget;
+    };
+  };
 };
 
 type RayIntersection = {
@@ -23,17 +40,62 @@ type RayIntersection = {
   point?: Vector3Like;
 };
 
+type RayIntersectionEventDetail = {
+  cursorEl?: EventTarget | null;
+  hand?: "left" | "right" | string;
+  intersection?: RayIntersection;
+};
+
 type AFrameRaycasterElement = HTMLElement & {
   components?: {
     raycaster?: {
       intersectedEls?: HTMLElement[];
       intersections?: RayIntersection[];
+      raycaster?: {
+        ray?: {
+          direction?: Vector3Like;
+          origin?: Vector3Like;
+        };
+      };
     };
   };
   object3D?: {
     getWorldDirection?: (target: Vector3Like) => Vector3Like;
+    getWorldPosition?: (target: Vector3Like) => Vector3Like;
   };
 };
+
+function createAFrameVector3() {
+  const Vector3Constructor = (globalThis as AFrameThreeGlobal).AFRAME?.THREE?.Vector3;
+  return Vector3Constructor ? new Vector3Constructor() : null;
+}
+
+function createDirectionTarget(): DirectionTarget {
+  const vector = createAFrameVector3();
+
+  if (vector) {
+    return vector;
+  }
+
+  return {
+    x: 0,
+    y: 0,
+    z: -1,
+    normalize() {
+      const length = Math.hypot(this.x, this.y, this.z) || 1;
+      this.x /= length;
+      this.y /= length;
+      this.z /= length;
+      return this;
+    },
+    set(x: number, y: number, z: number) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+      return this;
+    }
+  };
+}
 
 function elementFromIntersection(intersection: RayIntersection | null) {
   return intersection?.el ?? intersection?.object?.el ?? null;
@@ -87,14 +149,83 @@ function hasSpatialUiHit(target: EventTarget | null, scene: HTMLElement | null) 
 
 function readControllerCenter(target: EventTarget | null) {
   const element = target as AFrameRaycasterElement | null;
-  const direction = { x: 0, y: 0, z: -1 };
-  const worldDirection = element?.object3D?.getWorldDirection?.(direction);
+  const rayDirection = element?.components?.raycaster?.raycaster?.ray?.direction;
 
-  return worldDirection ? directionToViewCenter(worldDirection) : null;
+  if (rayDirection) {
+    return directionToViewCenter(rayDirection);
+  }
+
+  const worldDirection = element?.object3D?.getWorldDirection?.(createDirectionTarget());
+
+  // A-Frame raycasters point down local -Z, while a plain Object3D world
+  // direction reports local +Z. Negate this fallback to match the raycaster.
+  return worldDirection
+    ? directionToViewCenter({
+        x: -worldDirection.x,
+        y: -worldDirection.y,
+        z: -worldDirection.z
+      })
+    : null;
+}
+
+function readCursorTarget(event: Event) {
+  return (event as CustomEvent<RayIntersectionEventDetail>).detail?.cursorEl ?? null;
+}
+
+function readEventHand(event: Event) {
+  const hand = (event as CustomEvent<RayIntersectionEventDetail>).detail?.hand;
+  return hand === "left" || hand === "right" ? hand : null;
+}
+
+function isControllerRayTarget(target: EventTarget | null) {
+  const element = target instanceof HTMLElement ? target : null;
+  const hand = element?.dataset.hand ?? element?.getAttribute("hand");
+  const id = element?.id.toLowerCase() ?? "";
+
+  return hand === "left" || hand === "right" || id.includes("controller");
+}
+
+function readControllerElementFromEvent(event: Event, scene: HTMLElement) {
+  if (isControllerRayTarget(event.target)) {
+    return event.target;
+  }
+
+  const cursorTarget = readCursorTarget(event);
+  if (isControllerRayTarget(cursorTarget)) {
+    return cursorTarget;
+  }
+
+  const hand = readEventHand(event);
+  return hand
+    ? scene.querySelector(`#${hand}-controller, [data-hand="${hand}"]`)
+    : null;
+}
+
+function readBackgroundHitCenter(intersection: RayIntersection | null) {
+  const hitElement = elementFromIntersection(intersection);
+  const backgroundTarget = hitElement?.closest?.(`[${PC_MASK_BACKGROUND_HIT_ATTRIBUTE}="true"]`) as AFrameRaycasterElement | null;
+  const point = intersection?.point;
+
+  if (!point) {
+    return null;
+  }
+
+  const positionTarget = createAFrameVector3();
+  const worldPosition = positionTarget ? backgroundTarget?.object3D?.getWorldPosition?.(positionTarget) : null;
+
+  return directionToViewCenter(
+    worldPosition
+      ? {
+          x: point.x - worldPosition.x,
+          y: point.y - worldPosition.y,
+          z: point.z - worldPosition.z
+        }
+      : point
+  );
 }
 
 function readEventIntersection(event: Event): RayIntersection | null {
-  const detail = (event as CustomEvent<{ intersection?: RayIntersection }>).detail;
+  const detail = (event as CustomEvent<RayIntersectionEventDetail>).detail;
   return detail?.intersection ?? readFirstIntersection(event.target);
 }
 
@@ -117,7 +248,7 @@ export function usePcMaskRayTargetInput({
     }
 
     const moveToCenter = (center: PcViewCenter) => {
-      mask.moveMaskTo(center, 520);
+      mask.moveMaskTo(center, 520 / getPcEditorFrontendPlaybackRate());
     };
 
     const handleBackgroundClick = (event: Event) => {
@@ -129,33 +260,45 @@ export function usePcMaskRayTargetInput({
 
       const intersection = readEventIntersection(event);
       const target = elementFromIntersection(intersection) ?? (event.target instanceof HTMLElement ? event.target : null);
+      const controllerTarget = readControllerElementFromEvent(event, scene);
+      const controllerCenter = controllerTarget ? readControllerCenter(controllerTarget) : null;
 
-      if (!isBackgroundHitTarget(target) || !intersection?.point) {
+      if (!isBackgroundHitTarget(target) || (!intersection?.point && !controllerCenter)) {
         return;
       }
 
       event.stopPropagation();
-      moveToCenter(directionToViewCenter(intersection.point));
+      const center = controllerCenter ?? readBackgroundHitCenter(intersection);
+
+      if (center) {
+        moveToCenter(center);
+      }
     };
 
     const handleTriggerUp = (event: Event) => {
-      if (hasSpatialUiHit(event.target, scene)) {
+      const controllerTarget = readControllerElementFromEvent(event, scene);
+
+      if (!controllerTarget || hasSpatialUiHit(controllerTarget, scene)) {
         return;
       }
 
-      const intersection = readFirstIntersection(event.target);
+      const intersection = readFirstIntersection(controllerTarget);
       const hitElement = elementFromIntersection(intersection);
 
       if (isBlockingRayTarget(hitElement)) {
         return;
       }
 
-      if (intersection?.point && isBackgroundHitTarget(hitElement)) {
-        moveToCenter(directionToViewCenter(intersection.point));
+      if (isBackgroundHitTarget(hitElement)) {
+        const center = readControllerCenter(controllerTarget) ?? readBackgroundHitCenter(intersection);
+
+        if (center) {
+          moveToCenter(center);
+        }
         return;
       }
 
-      const controllerCenter = readControllerCenter(event.target);
+      const controllerCenter = readControllerCenter(controllerTarget);
       if (controllerCenter) {
         moveToCenter(controllerCenter);
       }

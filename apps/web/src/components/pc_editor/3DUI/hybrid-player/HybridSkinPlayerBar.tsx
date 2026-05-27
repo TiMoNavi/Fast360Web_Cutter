@@ -181,16 +181,17 @@ function material(color: string, opacity = 1, glow = 0.4) {
 type TextTone = "accent" | "icon" | "mono" | "primary" | "record" | "soft";
 
 function textProps(value: string, color = WHITE, width = 3, tone: TextTone = "primary") {
+  const textColor = WHITE;
   const font = tone === "icon" ? undefined : tone === "mono" || tone === "soft" ? "monoid" : "exo2bold";
   const letterSpacing = tone === "icon" ? 0 : tone === "mono" || tone === "soft" ? 1.8 : 2.6;
 
   return {
     align: "center",
     baseline: "center",
-    color,
+    color: textColor,
     ...(font ? { font } : {}),
     letterSpacing,
-    material: `shader: msdf; emissive: ${color}; emissiveIntensity: 0.52; depthTest: false; depthWrite: false`,
+    material: `shader: msdf; emissive: ${textColor}; emissiveIntensity: 0.52; depthTest: false; depthWrite: false`,
     opacity: tone === "soft" ? 0.86 : 1,
     side: "double",
     value,
@@ -218,7 +219,8 @@ function StyledText({
   value: string;
   width: number;
 }) {
-  const glow = glowColor ?? color;
+  const glow = WHITE;
+  const textColor = WHITE;
   const resolvedAlign = align ?? "center";
 
   return createElement(
@@ -232,7 +234,7 @@ function StyledText({
       scale
     }),
     createElement("a-text", {
-      ...textProps(value, color, width, tone),
+      ...textProps(value, textColor, width, tone),
       align: resolvedAlign,
       position: "0 0 0",
       scale
@@ -1344,8 +1346,8 @@ function PlayerText({
 
   return createElement(StyledText, {
     align: slot.align ?? "center",
-    color,
-    glowColor,
+    color: WHITE,
+    glowColor: WHITE,
     position: textSlotPosition(slot),
     scale: slot.scale,
     tone,

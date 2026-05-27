@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { getPcEditorFrontendPlaybackRate } from "../state";
 
 export type PcViewCenter = {
   pitch: number;
@@ -120,7 +121,7 @@ export const PcTrajectoryRippleCorrector = forwardRef<PcTrajectoryRippleCorrecto
           return;
         }
 
-        const progress = easeOutCubic((time - active.startedAt) / Math.max(active.durationMs, 1));
+        const progress = easeOutCubic(((time - active.startedAt) * getPcEditorFrontendPlaybackRate()) / Math.max(active.durationMs, 1));
         const camera = lerpCenter(active.cameraFrom, active.cameraTo, progress);
         const mask = lerpCenter(active.maskFrom, active.maskTo, progress);
         apply(camera, mask);

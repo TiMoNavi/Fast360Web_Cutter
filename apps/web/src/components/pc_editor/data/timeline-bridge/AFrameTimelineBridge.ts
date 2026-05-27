@@ -345,7 +345,7 @@ export class AFrameTimelineBridge {
       }
     }
 
-    return readHeadsetPose(this.context.refs.camera());
+    return readHeadsetPose(this.context.refs.camera(), this.context.refs.scene());
   }
 
   private readActiveController(): AFrameEntityLike | null {
@@ -389,7 +389,7 @@ export class AFrameTimelineBridge {
 
   private async tick() {
     this.tryBindAFrameInputEvents();
-    const headsetPose = readHeadsetPose(this.context.refs.camera());
+    const headsetPose = readHeadsetPose(this.context.refs.camera(), this.context.refs.scene());
     if (headsetPose) {
       setPcEditorCameraPose({
         center: {

@@ -7,6 +7,7 @@ import type { PcViewCenter } from "../PcTrajectoryRippleCorrector";
 import { screenPointToViewCenter } from "../operations/viewGeometry";
 import { isInteractiveTarget } from "./domTargetGuards";
 import type { PcEdgePanControls } from "./usePcEdgePan";
+import { getPcEditorFrontendPlaybackRate } from "../../state";
 
 const MASK_DRAG_YAW_PER_PX = 0.12;
 const MASK_DRAG_PITCH_PER_PX = 0.12;
@@ -107,6 +108,7 @@ export function usePcMaskPointerInput({
       const lastTime = active.lastTime ?? time;
       const deltaSeconds = Math.min(0.05, Math.max(0, (time - lastTime) / 1000));
       active.lastTime = time;
+      const frontendRate = getPcEditorFrontendPlaybackRate();
 
       const remaining = Math.hypot(active.pendingYaw, active.pendingPitch);
       if (remaining <= MASK_DRAG_SETTLE_EPSILON_DEG) {
@@ -117,10 +119,10 @@ export function usePcMaskPointerInput({
         return;
       }
 
-      const alpha = 1 - Math.exp(-deltaSeconds / MASK_DRAG_SMOOTH_RESPONSE_SECONDS);
+      const alpha = 1 - Math.exp(-deltaSeconds / (MASK_DRAG_SMOOTH_RESPONSE_SECONDS / frontendRate));
       const maxStep = Math.max(
         MASK_DRAG_SETTLE_EPSILON_DEG,
-        MASK_DRAG_MAX_SMOOTH_SPEED_DEG_PER_SECOND * Math.max(deltaSeconds, 1 / 120)
+        MASK_DRAG_MAX_SMOOTH_SPEED_DEG_PER_SECOND * frontendRate * Math.max(deltaSeconds, 1 / 120)
       );
       const stepScale = Math.min(alpha, maxStep / remaining, 1);
       const stepYaw = active.pendingYaw * stepScale;
@@ -167,7 +169,7 @@ export function usePcMaskPointerInput({
       event.currentTarget.setPointerCapture(event.pointerId);
 
       if (event.shiftKey) {
-        mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 1000);
+        mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 1000 / getPcEditorFrontendPlaybackRate());
         return;
       }
 
@@ -214,9 +216,10 @@ export function usePcMaskPointerInput({
         event.preventDefault();
         maskDragPointerRef.current = { x: event.clientX, y: event.clientY };
         const current = cameraLookRef.current ?? { pitch: 0, yaw: 0 };
+        const frontendRate = getPcEditorFrontendPlaybackRate();
         setCameraCenter({
-          pitch: current.pitch - deltaY * VIEW_DRAG_PITCH_PER_PX,
-          yaw: current.yaw + deltaX * VIEW_DRAG_YAW_PER_PX
+          pitch: current.pitch - deltaY * VIEW_DRAG_PITCH_PER_PX * frontendRate,
+          yaw: current.yaw + deltaX * VIEW_DRAG_YAW_PER_PX * frontendRate
         });
         return;
       }
@@ -247,9 +250,10 @@ export function usePcMaskPointerInput({
 
       if (Math.abs(excessX) > 1 || Math.abs(excessY) > 1) {
         const current = cameraLookRef.current ?? { pitch: 0, yaw: 0 };
+        const frontendRate = getPcEditorFrontendPlaybackRate();
         setCameraCenter({
-          pitch: current.pitch - excessY * MASK_DRAG_CAMERA_SPEED_PER_PX,
-          yaw: current.yaw + excessX * MASK_DRAG_CAMERA_SPEED_PER_PX
+          pitch: current.pitch - excessY * MASK_DRAG_CAMERA_SPEED_PER_PX * frontendRate,
+          yaw: current.yaw + excessX * MASK_DRAG_CAMERA_SPEED_PER_PX * frontendRate
         });
       }
 
@@ -289,7 +293,7 @@ export function usePcMaskPointerInput({
       maskDragPointerRef.current = null;
       edgePan.stopEdgePan();
       setMaskDragging(false);
-      mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 520);
+      mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 520 / getPcEditorFrontendPlaybackRate());
     },
     stopMaskPointerDrag
   };

@@ -90,6 +90,7 @@ export function AFrameScene({
     ),
     createElement("a-entity", {
       "data-hand": "left",
+      cursor: "fuse: false; downEvents: triggerdown; upEvents: triggerup",
       id: "left-controller",
       "laser-controls": "hand: left",
       line: "color: #dcecff; opacity: 0.55",
@@ -97,6 +98,7 @@ export function AFrameScene({
     }),
     createElement("a-entity", {
       "data-hand": "right",
+      cursor: "fuse: false; downEvents: triggerdown; upEvents: triggerup",
       id: "right-controller",
       "laser-controls": "hand: right",
       line: "color: #dcecff; opacity: 0.55",

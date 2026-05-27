@@ -384,7 +384,7 @@ export function PcWorkbenchPanel({
           <h3>Discard</h3>
           <div className="xr-pc-discard-hold">
             <button
-              aria-label="Hold to discard playback"
+              aria-label="Start or finish discarded playback"
               className="xr-pc-discard-button"
               data-active={discardActive ? "true" : "false"}
               data-testid="xr-pc-discard-button"
@@ -410,9 +410,9 @@ export function PcWorkbenchPanel({
               type="button"
             >
               <span className="xr-button-label">Del</span>
-              <span className="xr-button-key">{discardActive ? "Release" : "Hold"}</span>
+              <span className="xr-button-key">{discardActive ? "Finish" : "Toggle"}</span>
             </button>
-            <span>{discardActive ? "Release to finish discard range" : "Hold while playing to discard this segment"}</span>
+            <span>{discardActive ? "Press Del again, or release this button, to finish" : "Press Del to start, or hold this button"}</span>
           </div>
           <p>{discardMessage}</p>
           {discardLastRange ? (

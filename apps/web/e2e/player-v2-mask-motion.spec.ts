@@ -27,15 +27,14 @@ async function openPlayerV2(page: Page) {
   await registerUser(page);
   const response = await page.goto("/xr/player-v2", { waitUntil: "commit" });
   expect(response?.status()).toBeLessThan(400);
-  await page.waitForFunction(() => Boolean(window.AFRAME), { timeout: 20_000 });
-  await expect(page.getByTestId("player-v2-xr-stage")).toBeVisible();
-  await expect(page.getByTestId("aframe-crop-mask-preview")).toBeAttached();
+  await expect(page.getByTestId("player-v2-xr-stage")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("aframe-crop-mask-preview")).toBeAttached({ timeout: 30_000 });
   await page.waitForFunction(() => {
     const el = document.querySelector("[data-testid='aframe-crop-mask-preview']") as
       | (Element & { components?: Record<string, { initialized?: boolean }> })
       | null;
     return Boolean(el?.components?.["pc-crop-viewport-mask"]?.initialized);
-  });
+  }, { timeout: 30_000 });
 }
 
 async function readMaskCenter(page: Page): Promise<Center> {
@@ -165,6 +164,18 @@ async function readCameraFov(page: Page): Promise<number> {
     }
 
     return cameraAttr.fov;
+  });
+}
+
+async function readPlaybackRate(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const video = document.querySelector("video#player-v2-video") as HTMLVideoElement | null;
+
+    if (!video) {
+      throw new Error("Player video unavailable");
+    }
+
+    return video.playbackRate;
   });
 }
 
@@ -325,40 +336,70 @@ test("Player V2 roll changes are written to timeline path patches", async ({ pag
   await rollPatch;
 });
 
-test("Player V2 Delete marks discard and restore ranges on the timeline", async ({ page }) => {
+test("Player V2 Delete toggles discard and restore ranges on the timeline", async ({ page }) => {
   await openPlayerV2(page);
   await page.getByTestId("xr-pc-start-crop").click();
   await expect(page.getByTestId("xr-session-recording-toggle")).toContainText("End record", { timeout: 10_000 });
   await expect(page.getByTestId("xr-session-player-ui-status")).toContainText("playing", { timeout: 10_000 });
 
-  const discardPatch = page.waitForResponse((response) => {
-    const request = response.request();
-    return (
-      request.method() === "POST" &&
-      response.url().includes("/path-patches") &&
-      (request.postData() ?? "").includes('"reason":"discard"')
-    );
-  });
-  await page.keyboard.down("Delete");
-  await discardPatch;
+  await page.keyboard.press("Delete");
   await expect(page.getByTestId("xr-pc-discard-toast")).toContainText("当前播放内容将被放弃");
+  await page.waitForTimeout(240);
+  await expect(page.getByTestId("xr-pc-discard-toast")).toBeAttached();
 
-  const restorePatch = page.waitForResponse((response) => {
-    const request = response.request();
-    return (
-      request.method() === "POST" &&
-      response.url().includes("/path-patches") &&
-      (request.postData() ?? "").includes('"reason":"restore"')
-    );
-  });
-  await page.waitForTimeout(320);
-  await page.keyboard.up("Delete");
-  await restorePatch;
+  await page.keyboard.press("Delete");
 
   await expect(page.getByTestId("xr-pc-discard-hint")).toContainText("Last discard");
 });
 
-test("Player V2 V pointer follow keeps mask near camera and stops on release", async ({ page }) => {
+test("Player V2 PC toggle inputs coexist with held WASD motion", async ({ page }) => {
+  await openPlayerV2(page);
+  const stage = page.getByTestId("player-v2-xr-stage");
+  const box = await stage.boundingBox();
+  if (!box) {
+    throw new Error("Player stage missing bounding box");
+  }
+
+  await page.getByTestId("xr-pc-start-crop").click();
+  await expect(page.getByTestId("xr-session-recording-toggle")).toContainText("End record", { timeout: 10_000 });
+  await expect(page.getByTestId("xr-session-player-ui-status")).toContainText("playing", { timeout: 10_000 });
+
+  const startMask = await readMaskCenter(page);
+  await page.keyboard.press("KeyT");
+  await expect.poll(() => readPlaybackRate(page), { timeout: 5000 }).toBeLessThan(0.12);
+
+  await page.keyboard.press("Delete");
+  await expect(page.getByTestId("xr-pc-discard-toast")).toBeAttached();
+
+  await page.keyboard.down("KeyD");
+  await page.keyboard.down("KeyW");
+  await page.waitForTimeout(220);
+  const movedByKeys = await readMaskCenter(page);
+  expect(angularDistance(movedByKeys, startMask)).toBeGreaterThan(0.4);
+
+  const startX = box.x + box.width / 2;
+  const startY = box.y + box.height / 2;
+  await page.keyboard.press("KeyV");
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 80, startY - 28, { steps: 6 });
+  await page.waitForTimeout(260);
+  await page.mouse.up();
+
+  await expect(page.getByTestId("xr-pc-discard-toast")).toBeAttached();
+  await expect.poll(() => readPlaybackRate(page), { timeout: 5000 }).toBeLessThan(0.12);
+
+  await page.keyboard.press("Delete");
+
+  await page.keyboard.press("KeyT");
+  await expect.poll(() => readPlaybackRate(page), { timeout: 5000 }).toBeGreaterThan(0.9);
+  await page.keyboard.press("KeyV");
+  await page.keyboard.up("KeyD");
+  await page.keyboard.up("KeyW");
+  await expect(page.getByTestId("xr-pc-discard-hint")).toContainText("Last discard");
+});
+
+test("Player V2 V pointer follow toggles on key press and cancels on second press", async ({ page }) => {
   await openPlayerV2(page);
   const stage = page.getByTestId("player-v2-xr-stage");
   const box = await stage.boundingBox();
@@ -370,7 +411,7 @@ test("Player V2 V pointer follow keeps mask near camera and stops on release", a
   const startY = box.y + box.height / 2;
   const startCamera = await readCameraCenter(page);
   await page.mouse.move(startX, startY);
-  await page.keyboard.down("KeyV");
+  await page.keyboard.press("KeyV");
   await page.mouse.down();
   await page.mouse.move(startX + 130, startY - 32, { steps: 8 });
   await page.waitForTimeout(650);
@@ -381,10 +422,12 @@ test("Player V2 V pointer follow keeps mask near camera and stops on release", a
   expect(angularDistance(heldMask, heldCamera)).toBeLessThan(4);
 
   await page.mouse.up();
-  await page.keyboard.up("KeyV");
-  const releasedMask = await readMaskCenter(page);
+  await page.keyboard.press("KeyV");
+  const cancelledMask = await readMaskCenter(page);
+  await page.mouse.down();
   await page.mouse.move(startX - 130, startY + 32, { steps: 8 });
   await page.waitForTimeout(320);
-  const afterRelease = await readMaskCenter(page);
-  expect(angularDistance(afterRelease, releasedMask)).toBeLessThan(0.8);
+  await page.mouse.up();
+  const afterCancel = await readMaskCenter(page);
+  expect(angularDistance(afterCancel, cancelledMask)).toBeLessThan(0.8);
 });

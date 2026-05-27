@@ -24,7 +24,7 @@ export type PlayerV2DiscardState = {
 export const DEFAULT_PLAYER_V2_DISCARD_STATE: PlayerV2DiscardState = {
   active: false,
   lastRange: null,
-  message: "Hold Del while playing to mark a discard range.",
+  message: "Press Del while playing to start a discard range. Press Del again to finish.",
   tone: "idle"
 };
 
@@ -85,7 +85,7 @@ function readCurrentViewRollAfterStep(timelineBridge: AFrameTimelineBridge, delt
 }
 
 function readCurrentVideoTimeMs(timelineBridge: AFrameTimelineBridge) {
-  return Math.max(0, Math.round(getPcEditorRuntimeState().playback?.currentTimeMs ?? timelineBridge.getCurrentVideoTimeMs()));
+  return timelineBridge.getCurrentVideoTimeMs();
 }
 
 function formatDiscardTime(ms: number) {
@@ -163,7 +163,25 @@ export function usePlayerV2TimelineWorkflow({
   });
 
   usePcEditorEventSubscription("editor.crop.start", () => {
-    recordingStartMsRef.current = readCurrentVideoTimeMs(timelineBridge);
+    void (async () => {
+      const recordingStartMs = readCurrentVideoTimeMs(timelineBridge);
+      recordingStartMsRef.current = recordingStartMs;
+      timelineBridge.start();
+
+      const center = readCurrentViewCenter(timelineBridge);
+      await timelineBridge.dispatch({
+        type: "setViewTarget",
+        flushReason: "lock",
+        force: true,
+        ignoreLock: true,
+        pathAnchor: true,
+        pose: {
+          input: "head_gaze",
+          pitch: center.pitch,
+          yaw: center.yaw
+        }
+      });
+    })();
   });
 
   usePcEditorEventSubscription("editor.viewport.fov.step", (event) => {
@@ -326,6 +344,7 @@ export function usePlayerV2TimelineWorkflow({
 
   usePcEditorEventSubscription("editor.timeline.discard.begin", () => {
     if (discardHoldRef.current) {
+      void finishDiscardRange("release");
       return;
     }
 
@@ -333,7 +352,7 @@ export function usePlayerV2TimelineWorkflow({
     if (playback && !playback.isPlaying) {
       setDiscardState({
         ...DEFAULT_PLAYER_V2_DISCARD_STATE,
-        message: "Play the video, then hold Del to mark discarded playback.",
+        message: "Play the video, then press Del to start marking discarded playback.",
         tone: "warning"
       });
       return;
@@ -344,7 +363,7 @@ export function usePlayerV2TimelineWorkflow({
     setDiscardState({
       active: true,
       lastRange: null,
-      message: `Discarding from ${formatDiscardTime(startMs)}. Release Del to restore the timeline.`,
+      message: `Discarding from ${formatDiscardTime(startMs)}. Press Del again to restore the timeline.`,
       tone: "active"
     });
     void timelineBridge.dispatch({ type: "discardRange", startMs });

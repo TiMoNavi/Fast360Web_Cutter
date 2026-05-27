@@ -1,6 +1,13 @@
 import type { EffectEventName } from "@/lib/path-protocol";
 import { verticalFovFromHorizontal } from "../../mask_controller";
 import type { ViewTargetState, WebXrSemanticEvent } from "../../data/timeline-bridge";
+import {
+  clampEffectSpeed,
+  readEffectTiming,
+  readNumberParam,
+  scaleTemporalParams,
+  semanticDurationMs
+} from "../timing";
 import { getPcEditorEffectSpec } from "./effectSpecs";
 import type {
   EffectEventDraft,
@@ -11,8 +18,6 @@ import type {
   ViewPathRangeDraft
 } from "./types";
 
-const EFFECT_SPEED_MIN = 0.1;
-const EFFECT_SPEED_MAX = 5;
 const MIN_VIEW_PATH_DURATION_MS = 160;
 const MIN_CAMERA_FOV_H = 35;
 const MAX_CAMERA_FOV_H = 140;
@@ -59,20 +64,6 @@ function mergeParams(...params: Array<Record<string, unknown> | null | undefined
       ...value
     };
   }, {});
-}
-
-function readNumberParam(params: Record<string, unknown> | null | undefined, key: string, fallback: number) {
-  const value = params?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function readEffectSpeed(input: ViewPathMotionCompileInput, params: Record<string, unknown> | null | undefined) {
-  const value = input.effectSpeed ?? readNumberParam(params, "effectSpeed", 1);
-  return clamp(value, EFFECT_SPEED_MIN, EFFECT_SPEED_MAX);
-}
-
-function scaleDurationByEffectSpeed(durationMs: number, effectSpeed: number) {
-  return Math.max(1, Math.round(durationMs / effectSpeed));
 }
 
 function cloneViewState(state: ViewTargetState): ViewTargetState {
@@ -195,16 +186,22 @@ export function compileEffectSelectDraft(input: EffectSelectCompileInput): Effec
     input.fallbackEventName ??
     input.effectId
   ) as EffectEventName;
+  const params = mergeParams(spec?.defaultParams, input.fallbackParams, input.params);
+  const timing = readEffectTiming({
+    authoredDurationMs: input.durationMs,
+    effectSpeed: input.effectSpeed,
+    fallbackDurationMs: spec?.defaultDurationMs ?? input.fallbackDurationMs ?? 900,
+    params
+  });
+  const timedParams = scaleTemporalParams(params, timing.effectSpeed);
 
   return {
     displayName: input.label,
-    durationMs: input.durationMs ?? spec?.defaultDurationMs ?? input.fallbackDurationMs ?? 900,
+    durationMs: timing.semanticDurationMs,
     effectType,
     kind: "effect-event",
     params: mergeParams(
-      spec?.defaultParams,
-      input.fallbackParams,
-      input.params,
+      timedParams,
       {
         category: input.categoryId,
         effectId: input.effectId
@@ -232,15 +229,21 @@ export function compileViewPathMotionDraft(input: ViewPathMotionCompileInput): V
 
   const startState = input.timeline.viewState;
   const params = mergeParams(preset.defaultParams, spec?.defaultParams, input.params);
-  const effectSpeed = readEffectSpeed(input, params);
-  const requestedDurationMs = input.durationMs ?? spec?.defaultDurationMs ?? input.fallbackDurationMs ?? preset.defaultDurationMs;
-  const durationMs = Math.max(MIN_VIEW_PATH_DURATION_MS, scaleDurationByEffectSpeed(requestedDurationMs, effectSpeed));
+  const timing = readEffectTiming({
+    authoredDurationMs: input.durationMs,
+    effectSpeed: input.effectSpeed,
+    fallbackDurationMs: spec?.defaultDurationMs ?? input.fallbackDurationMs ?? preset.defaultDurationMs,
+    minDurationMs: MIN_VIEW_PATH_DURATION_MS,
+    params
+  });
+  const durationMs = timing.semanticDurationMs;
+  const timedParams = scaleTemporalParams(params, timing.effectSpeed);
 
   if (preset.id === "impact-shake") {
-    const shakes = Math.max(2, Math.min(6, Math.round(readNumberParam(params, "shakes", 4))));
-    const amplitudeYaw = clamp(readNumberParam(params, "amplitudeYaw", 2.6), 0.2, 8);
-    const amplitudePitch = clamp(readNumberParam(params, "amplitudePitch", 1.4), 0, 5);
-    const decay = clamp(readNumberParam(params, "decay", 0.62), 0.25, 0.9);
+    const shakes = Math.max(2, Math.min(6, Math.round(readNumberParam(timedParams, "shakes", 4))));
+    const amplitudeYaw = clamp(readNumberParam(timedParams, "amplitudeYaw", 2.6), 0.2, 8);
+    const amplitudePitch = clamp(readNumberParam(timedParams, "amplitudePitch", 1.4), 0, 5);
+    const decay = clamp(readNumberParam(timedParams, "decay", 0.62), 0.25, 0.9);
     const keyframes = Array.from({ length: shakes }, (_, index) => {
       const sign = index % 2 === 0 ? 1 : -1;
       const power = Math.pow(decay, index);
@@ -272,17 +275,17 @@ export function compileViewPathMotionDraft(input: ViewPathMotionCompileInput): V
   }
 
   if (preset.id === "look-around") {
-    const sweepAtMs = Math.max(1, Math.round(durationMs * clamp(readNumberParam(params, "sweepAtRatio", 0.42), 0.2, 0.65)));
-    const returnAtMs = Math.max(sweepAtMs + 1, Math.round(durationMs * clamp(readNumberParam(params, "returnAtRatio", 0.72), 0.5, 0.9)));
+    const sweepAtMs = Math.max(1, Math.round(durationMs * clamp(readNumberParam(timedParams, "sweepAtRatio", 0.42), 0.2, 0.65)));
+    const returnAtMs = Math.max(sweepAtMs + 1, Math.round(durationMs * clamp(readNumberParam(timedParams, "returnAtRatio", 0.72), 0.5, 0.9)));
     const sweepState = cloneWithCameraDelta(startState, {
-      deltaFovH: readNumberParam(params, "widenFovH", 3),
-      deltaPitch: readNumberParam(params, "sweepPitch", 0),
-      deltaYaw: readNumberParam(params, "sweepYaw", 28)
+      deltaFovH: readNumberParam(timedParams, "widenFovH", 3),
+      deltaPitch: readNumberParam(timedParams, "sweepPitch", 0),
+      deltaYaw: readNumberParam(timedParams, "sweepYaw", 28)
     });
     const returnState = cloneWithCameraDelta(startState, {
-      deltaFovH: readNumberParam(params, "returnFovH", 1),
-      deltaPitch: readNumberParam(params, "returnPitch", 0),
-      deltaYaw: readNumberParam(params, "returnYaw", -10)
+      deltaFovH: readNumberParam(timedParams, "returnFovH", 1),
+      deltaPitch: readNumberParam(timedParams, "returnPitch", 0),
+      deltaYaw: readNumberParam(timedParams, "returnYaw", -10)
     });
 
     return {
@@ -312,11 +315,11 @@ export function compileViewPathMotionDraft(input: ViewPathMotionCompileInput): V
   }
 
   if (preset.id === "dolly-zoom") {
-    const peakAtMs = Math.max(1, Math.min(durationMs - 1, Math.round(readNumberParam(params, "peakAtMs", durationMs * 0.48))));
+    const peakAtMs = Math.max(1, Math.min(durationMs - 1, Math.round(readNumberParam(timedParams, "peakAtMs", durationMs * 0.48))));
     const peakState = cloneWithCameraDelta(startState, {
-      deltaFovH: readNumberParam(params, "peakDeltaFovH", -18),
-      deltaPitch: readNumberParam(params, "peakDeltaPitch", 0),
-      deltaYaw: readNumberParam(params, "peakDeltaYaw", 0)
+      deltaFovH: readNumberParam(timedParams, "peakDeltaFovH", -18),
+      deltaPitch: readNumberParam(timedParams, "peakDeltaPitch", 0),
+      deltaYaw: readNumberParam(timedParams, "peakDeltaYaw", 0)
     });
 
     return {
@@ -340,18 +343,18 @@ export function compileViewPathMotionDraft(input: ViewPathMotionCompileInput): V
   }
 
   const endState = cloneWithCameraDelta(startState, {
-    deltaFovH: readNumberParam(params, "deltaFovH", 0) + readNumberParam(params, "reboundFovH", 0),
-    deltaPitch: readNumberParam(params, "deltaPitch", 0),
-    deltaYaw: readNumberParam(params, "deltaYaw", 0)
+    deltaFovH: readNumberParam(timedParams, "deltaFovH", 0) + readNumberParam(timedParams, "reboundFovH", 0),
+    deltaPitch: readNumberParam(timedParams, "deltaPitch", 0),
+    deltaYaw: readNumberParam(timedParams, "deltaYaw", 0)
   });
 
   if (preset.id === "hero-push") {
-    const peakAtRatio = clamp(readNumberParam(params, "peakAtRatio", 0.72), 0.35, 0.9);
+    const peakAtRatio = clamp(readNumberParam(timedParams, "peakAtRatio", 0.72), 0.35, 0.9);
     const peakAtMs = Math.max(1, Math.round(durationMs * peakAtRatio));
     const peakState = cloneWithCameraDelta(startState, {
-      deltaFovH: readNumberParam(params, "deltaFovH", -10),
-      deltaPitch: readNumberParam(params, "deltaPitch", 0),
-      deltaYaw: readNumberParam(params, "deltaYaw", 0)
+      deltaFovH: readNumberParam(timedParams, "deltaFovH", -10),
+      deltaPitch: readNumberParam(timedParams, "deltaPitch", 0),
+      deltaYaw: readNumberParam(timedParams, "deltaYaw", 0)
     });
 
     return {
@@ -388,6 +391,12 @@ export function compileViewPathMotionDraft(input: ViewPathMotionCompileInput): V
 
 export function compileEffectHoldEndDraft(input: EffectHoldEndCompileInput): EffectEventDraft {
   const spec = getPcEditorEffectSpec(input.effectId);
+  const effectSpeed = clampEffectSpeed(input.effectSpeed ?? readNumberParam(input.params, "effectSpeed", 1));
+  const fadeMs = semanticDurationMs(input.fadeMs, effectSpeed, 1);
+  const params = mergeParams(spec?.defaultParams, input.params);
+  const timedParams = scaleTemporalParams(params, effectSpeed, {
+    excludeKeys: ["holdDurationMs"]
+  });
 
   return {
     displayName: input.label,
@@ -396,15 +405,14 @@ export function compileEffectHoldEndDraft(input: EffectHoldEndCompileInput): Eff
     endMs: input.endMs,
     kind: "effect-event",
     params: mergeParams(
-      spec?.defaultParams,
-      input.params,
+      timedParams,
       {
         category: input.categoryId,
         direction: "hold",
-        edgeMs: input.fadeMs,
+        edgeMs: fadeMs,
         effectId: input.effectId,
-        fadeInMs: input.fadeMs,
-        fadeOutMs: input.fadeMs,
+        fadeInMs: fadeMs,
+        fadeOutMs: fadeMs,
         holdDurationMs: input.durationMs,
         holdMode: "press-release",
         peakOpacity: 1

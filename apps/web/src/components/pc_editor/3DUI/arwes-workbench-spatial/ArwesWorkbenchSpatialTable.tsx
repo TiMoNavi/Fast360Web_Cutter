@@ -4,8 +4,8 @@ import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import type { PcEditorCommand } from "../commands";
 import {
   SPATIAL_UI_HIT_ATTRIBUTE,
+  SPATIAL_UI_HIT_RENDER_ORDER,
   SPATIAL_UI_RENDER_ORDER,
-  transparentHitMaterial,
   useSpatialButtonEvents,
   useSpatialRayBlockerEvents,
   type SpatialControlVisualState
@@ -96,6 +96,9 @@ const WORKBENCH_REGION_HOLD_COMMANDS: Partial<Record<string, WorkbenchRegionHold
   MORE_DROP: () => ({ begin: { type: "timeline.discard.begin" }, end: { type: "timeline.discard.end" } })
 };
 
+const WORKBENCH_RAY_BLOCKER_LAYER_Z = 0.038;
+const WORKBENCH_REGION_HIT_LAYER_Z = 0.058;
+
 function createTextureCanvas(id: string) {
   const existing = document.getElementById(id) as HTMLCanvasElement | null;
 
@@ -125,6 +128,10 @@ function flatTextureMaterial(id: string) {
   return `shader: flat; src: #${id}; transparent: true; alphaTest: 0.01; side: double; depthTest: false; depthWrite: false`;
 }
 
+function transparentHitVolumeMaterial(color = "#ffffff") {
+  return `shader: flat; color: ${color}; emissive: ${color}; emissiveIntensity: 0; opacity: 0.001; transparent: true; side: double; depthTest: false; depthWrite: false`;
+}
+
 function elevateTableLayer(root: AFrameEntityElement | null) {
   root?.object3D?.traverse?.((child) => {
     child.renderOrder = SPATIAL_UI_RENDER_ORDER;
@@ -144,8 +151,9 @@ function WorkbenchRayBlocker() {
     [SPATIAL_UI_HIT_ATTRIBUTE]: "true",
     "data-testid": "arwes-workbench-spatial-table-hit-plane",
     height: String(ARWES_WORKBENCH_WORLD_HEIGHT),
-    material: transparentHitMaterial(),
-    position: "0 0 0.045",
+    material: transparentHitVolumeMaterial("#00ffff"),
+    position: `0 0 ${WORKBENCH_RAY_BLOCKER_LAYER_Z}`,
+    renderOrder: SPATIAL_UI_HIT_RENDER_ORDER,
     ref,
     width: String(ARWES_WORKBENCH_WORLD_WIDTH)
   });
@@ -200,8 +208,9 @@ function WorkbenchRegionHitTarget({
     "data-spatial-target-id": regionTargetId(region.id),
     "data-testid": `arwes-workbench-region-hit-${region.id.toLowerCase()}`,
     height: String(size.height),
-    material: transparentHitMaterial(),
-    position: worldPositionFromPx(region.x + region.w / 2, region.y + region.h / 2, 0.072),
+    material: transparentHitVolumeMaterial("#ffffff"),
+    position: worldPositionFromPx(region.x + region.w / 2, region.y + region.h / 2, WORKBENCH_REGION_HIT_LAYER_Z),
+    renderOrder: SPATIAL_UI_HIT_RENDER_ORDER,
     ref,
     width: String(size.width)
   });
@@ -244,15 +253,16 @@ export function ArwesWorkbenchSpatialTable({
 
     paintArwesWorkbenchBase(baseCanvas);
     paintArwesWorkbenchControls(controlCanvas, { disabledRegionIds });
-    paintArwesWorkbenchText(textCanvas, { discardActive, recordingActive, renderExportId, renderStatus });
+    paintArwesWorkbenchText(textCanvas);
     setTexturesReady(true);
 
     return () => {
+      setTexturesReady(false);
       baseCanvas.remove();
       controlCanvas.remove();
       textCanvas.remove();
     };
-  }, [discardActive, disabledRegionIds, enabled, recordingActive, renderExportId, renderStatus]);
+  }, [disabledRegionIds, enabled]);
 
   useEffect(() => {
     if (!texturesReady) {

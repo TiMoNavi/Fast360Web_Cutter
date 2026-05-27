@@ -89,7 +89,22 @@ const PLAYER_V2_EFFECTS: Record<string, PlayerV2EffectDefinition> = {
   "review-flag": { eventName: "marker.review_flag" },
 
   "text-title": { durationMs: 2400, eventName: "overlay.text", params: { backgroundOpacity: 0.45, position: "bottom_center", text: "TEXT" } },
-  "letterbox-bars": { durationMs: 1800, eventName: "overlay.letterbox", params: { opacity: 1, ratio: 0.12 } }
+  "letterbox-bars": { durationMs: 1800, eventName: "overlay.letterbox", params: { opacity: 1, ratio: 0.12 } },
+  "portal-ring": {
+    durationMs: 1800,
+    eventName: "overlay.portal_ring",
+    params: { color: "#00d8ff", coreColor: "#05061f", opacity: 0.92, radius: 0.31, secondaryColor: "#ff4dff", thickness: 0.035 }
+  },
+  "time-vortex": {
+    durationMs: 2200,
+    eventName: "overlay.time_vortex",
+    params: { color: "#4be3ff", coreColor: "#02030d", opacity: 0.86, radius: 0.36, secondaryColor: "#9a4dff" }
+  },
+  "explosion-sticker": {
+    durationMs: 900,
+    eventName: "overlay.explosion_sticker",
+    params: { color: "#fff0a0", emberColor: "#ff1f00", opacity: 0.95, radius: 0.34, secondaryColor: "#ff6a00", smokeColor: "#282018" }
+  }
 };
 
 export function resolvePlayerV2Effect(effectId: string): PlayerV2EffectDefinition {

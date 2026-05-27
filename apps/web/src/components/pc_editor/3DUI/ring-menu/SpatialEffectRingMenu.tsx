@@ -16,6 +16,9 @@ type AFrameEntityElement = HTMLElement & {
   object3D?: {
     getWorldPosition?: (target: { x: number; y: number; z: number }) => void;
     lookAt?: (target: { x: number; y: number; z: number }) => void;
+    position?: {
+      set?: (x: number, y: number, z: number) => void;
+    };
     traverse?: (callback: (child: { renderOrder?: number }) => void) => void;
   };
 };
@@ -44,6 +47,10 @@ const COLORS = {
 const TOP_ANGLE = 90;
 const ARC_GAP = 7;
 const HOLD_EFFECT_IDS = new Set(["black-fade", "white-fade"]);
+const CATEGORY_DWELL_OPEN_MS = 500;
+const EFFECT_LEVEL_IDLE_COLLAPSE_MS = 1000;
+const RING_MENU_FALLBACK_POSITION = { x: 0.44, y: 1.2, z: -0.86 };
+const RING_MENU_CONTROLLER_Y_OFFSET = 0.08;
 
 function toRadians(degrees: number) {
   return (degrees * Math.PI) / 180;
@@ -226,7 +233,7 @@ function RingArc({
   );
 }
 
-function useBillboard(rootRef: RefObject<AFrameEntityElement | null>, enabled: boolean) {
+function useControllerAnchoredBillboard(rootRef: RefObject<AFrameEntityElement | null>, enabled: boolean) {
   useEffect(() => {
     if (!enabled) {
       return undefined;
@@ -234,12 +241,26 @@ function useBillboard(rootRef: RefObject<AFrameEntityElement | null>, enabled: b
 
     let frameId = 0;
     const cameraPosition = { x: 0, y: 1.6, z: 0 };
+    const controllerPosition = { x: 0, y: 0, z: 0 };
 
     const tick = () => {
       const root = rootRef.current;
       const camera = document.querySelector("#main-camera") as AFrameEntityElement | null;
+      const controller = document.querySelector("#right-controller") as AFrameEntityElement | null;
 
+      controller?.object3D?.getWorldPosition?.(controllerPosition);
       camera?.object3D?.getWorldPosition?.(cameraPosition);
+
+      const hasControllerPose =
+        Boolean(controller?.object3D?.getWorldPosition) &&
+        Math.abs(controllerPosition.x) + Math.abs(controllerPosition.y) + Math.abs(controllerPosition.z) > 0.001;
+      const anchor = hasControllerPose ? controllerPosition : RING_MENU_FALLBACK_POSITION;
+
+      root?.object3D?.position?.set?.(
+        anchor.x,
+        anchor.y + (hasControllerPose ? RING_MENU_CONTROLLER_Y_OFFSET : 0),
+        anchor.z
+      );
       root?.object3D?.lookAt?.(cameraPosition);
       root?.object3D?.traverse?.((child) => {
         child.renderOrder = SPATIAL_UI_TEXT_RENDER_ORDER;
@@ -262,7 +283,10 @@ export function SpatialEffectRingMenu({
   visible: boolean;
 }) {
   const rootRef = useRef<AFrameEntityElement | null>(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(categories[0]?.id ?? null);
+  const selectedCategoryIdRef = useRef<string | null>(null);
+  const categoryDwellTimerRef = useRef<number | null>(null);
+  const effectCollapseTimerRef = useRef<number | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [interaction, setInteraction] = useState<Record<string, SpatialControlVisualState>>({});
   const holdRef = useRef<{
     category: SpatialEffectCategory;
@@ -270,19 +294,24 @@ export function SpatialEffectRingMenu({
     startedAtMs: number;
   } | null>(null);
 
-  useBillboard(rootRef, visible);
+  useControllerAnchoredBillboard(rootRef, visible);
 
   useEffect(() => {
-    if (!categories.some((category) => category.id === selectedCategoryId)) {
-      setSelectedCategoryId(categories[0]?.id ?? null);
+    if (selectedCategoryId && !categories.some((category) => category.id === selectedCategoryId)) {
+      selectedCategoryIdRef.current = null;
+      setSelectedCategoryId(null);
     }
   }, [categories, selectedCategoryId]);
+
+  useEffect(() => {
+    selectedCategoryIdRef.current = selectedCategoryId;
+  }, [selectedCategoryId]);
 
   const categoryItems = useMemo<RingItem[]>(
     () => categories.map((category) => ({ category, id: `category-${category.id}`, label: category.label })),
     [categories]
   );
-  const selectedCategory = categories.find((category) => category.id === selectedCategoryId) ?? categories[0] ?? null;
+  const selectedCategory = selectedCategoryId ? categories.find((category) => category.id === selectedCategoryId) ?? null : null;
   const effectItems = useMemo<RingItem[]>(
     () => (selectedCategory?.effects ?? []).map((effect) => ({ effect, id: `effect-${effect.id}`, label: effect.label })),
     [selectedCategory]
@@ -303,10 +332,58 @@ export function SpatialEffectRingMenu({
     });
   };
 
+  const clearCategoryDwellTimer = () => {
+    if (categoryDwellTimerRef.current !== null) {
+      window.clearTimeout(categoryDwellTimerRef.current);
+      categoryDwellTimerRef.current = null;
+    }
+  };
+
+  const clearEffectCollapseTimer = () => {
+    if (effectCollapseTimerRef.current !== null) {
+      window.clearTimeout(effectCollapseTimerRef.current);
+      effectCollapseTimerRef.current = null;
+    }
+  };
+
+  const openCategoryLevel = (category: SpatialEffectCategory) => {
+    clearCategoryDwellTimer();
+    clearEffectCollapseTimer();
+
+    if (selectedCategoryIdRef.current === category.id) {
+      return;
+    }
+
+    selectedCategoryIdRef.current = category.id;
+    setSelectedCategoryId(category.id);
+    onAction?.({ categoryId: category.id, open: true, type: "effects.category.toggle" });
+  };
+
+  const scheduleCategoryDwellOpen = (category: SpatialEffectCategory) => {
+    clearCategoryDwellTimer();
+    clearEffectCollapseTimer();
+    categoryDwellTimerRef.current = window.setTimeout(() => {
+      openCategoryLevel(category);
+    }, CATEGORY_DWELL_OPEN_MS);
+  };
+
+  const scheduleEffectLevelCollapse = () => {
+    clearEffectCollapseTimer();
+    effectCollapseTimerRef.current = window.setTimeout(() => {
+      if (holdRef.current) {
+        effectCollapseTimerRef.current = null;
+        return;
+      }
+
+      selectedCategoryIdRef.current = null;
+      setSelectedCategoryId(null);
+      effectCollapseTimerRef.current = null;
+    }, EFFECT_LEVEL_IDLE_COLLAPSE_MS);
+  };
+
   const handleItemClick = (item: RingItem) => {
     if (item.category) {
-      setSelectedCategoryId(item.category.id);
-      onAction?.({ categoryId: item.category.id, open: true, type: "effects.category.toggle" });
+      openCategoryLevel(item.category);
       return;
     }
 
@@ -325,6 +402,26 @@ export function SpatialEffectRingMenu({
       ...value,
       [item.id]: state
     }));
+
+    if (item.category) {
+      if (state === "pressed") {
+        openCategoryLevel(item.category);
+      } else if (state === "hover") {
+        scheduleCategoryDwellOpen(item.category);
+      } else {
+        clearCategoryDwellTimer();
+        scheduleEffectLevelCollapse();
+      }
+      return;
+    }
+
+    if (item.effect) {
+      if (state === "idle") {
+        scheduleEffectLevelCollapse();
+      } else {
+        clearEffectCollapseTimer();
+      }
+    }
 
     if (!item.effect || !selectedCategory || !HOLD_EFFECT_IDS.has(item.effect.id)) {
       return;
@@ -350,10 +447,28 @@ export function SpatialEffectRingMenu({
   };
 
   useEffect(() => {
-    if (!visible) {
-      finishHold();
+    if (visible) {
+      selectedCategoryIdRef.current = null;
+      setSelectedCategoryId(null);
+      setInteraction({});
+      return;
     }
-  });
+
+    finishHold();
+    clearCategoryDwellTimer();
+    clearEffectCollapseTimer();
+    selectedCategoryIdRef.current = null;
+    setSelectedCategoryId(null);
+    setInteraction({});
+  }, [visible]);
+
+  useEffect(
+    () => () => {
+      clearCategoryDwellTimer();
+      clearEffectCollapseTimer();
+    },
+    []
+  );
 
   if (!visible || categories.length === 0) {
     return null;
@@ -414,9 +529,9 @@ export function SpatialEffectRingMenu({
     createElement("a-text", {
       align: "center",
       baseline: "center",
-      color: COLORS.cyan,
+      color: COLORS.white,
       font: "exo2bold",
-      material: `shader: msdf; emissive: ${COLORS.cyan}; emissiveIntensity: 0.58`,
+      material: `shader: msdf; emissive: ${COLORS.white}; emissiveIntensity: 0.58`,
       position: "0 -0.54 0.03",
       scale: "0.075 0.075 0.075",
       side: "double",

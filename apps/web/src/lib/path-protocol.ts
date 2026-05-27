@@ -57,7 +57,10 @@ export type BuiltInEffectEventName =
   | "filter.chromatic_aberration"
   | "filter.vignette"
   | "overlay.letterbox"
-  | "overlay.text";
+  | "overlay.text"
+  | "overlay.portal_ring"
+  | "overlay.time_vortex"
+  | "overlay.explosion_sticker";
 
 export type EffectEventName = BuiltInEffectEventName | (string & {});
 

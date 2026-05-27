@@ -242,7 +242,7 @@ function Start-Frontend {
   $err = Join-Path $generatedDir "web-$Port.err.log"
   $webDir = Join-Path $repoRoot "apps\web"
   $apiBase = "http://127.0.0.1:$ApiPort"
-  $command = "Set-Location '$webDir'; `$env:API_BASE_URL='$apiBase'; `$env:NEXT_PUBLIC_API_BASE_URL=''; npx next dev --hostname 127.0.0.1 --port $Port"
+  $command = "Set-Location '$webDir'; `$env:API_BASE_URL='$apiBase'; `$env:NEXT_PUBLIC_API_BASE_URL=''; `$env:NEXT_DIST_DIR='.next-public-tunnel'; node server.mjs --hostname 127.0.0.1 --port $Port"
   $process = Start-Process powershell.exe -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -RedirectStandardError $err -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $command)
   return $process.Id
 }

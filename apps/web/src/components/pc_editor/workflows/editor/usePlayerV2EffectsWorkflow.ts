@@ -18,6 +18,7 @@ import { resolvePlayerV2Effect } from "./playerV2EffectCatalog";
 type ActiveHoldEffect = {
   categoryId: string;
   conflictGroup?: string | null;
+  effectSpeed: number;
   effectId: string;
   eventName: EffectEventName;
   label: string;
@@ -130,9 +131,10 @@ export function usePlayerV2EffectsWorkflow({
     const conflictGroup = readStringPayload(event.payload, "conflictGroup");
     const renderFallback = readRenderFallbackPayload(event.payload);
     const renderStage = readRenderStagePayload(event.payload);
+    const effectSpeed = readRuntimeEffectSpeed();
     const viewPathDraft = compileViewPathMotionDraft({
       durationMs: catalogDurationMs,
-      effectSpeed: readRuntimeEffectSpeed(),
+      effectSpeed,
       effectId,
       fallbackDurationMs: effect.durationMs,
       params: catalogParams ?? effect.params,
@@ -152,6 +154,7 @@ export function usePlayerV2EffectsWorkflow({
       categoryId,
       conflictGroup,
       durationMs: catalogDurationMs,
+      effectSpeed,
       effectId,
       eventName: catalogEventName,
       fallbackDurationMs: effect.durationMs,
@@ -184,6 +187,7 @@ export function usePlayerV2EffectsWorkflow({
     activeHoldRef.current = {
       categoryId,
       conflictGroup,
+      effectSpeed: readRuntimeEffectSpeed(),
       effectId,
       eventName: (catalogEventName ?? effect.eventName) as EffectEventName,
       label,
@@ -209,10 +213,10 @@ export function usePlayerV2EffectsWorkflow({
     activeHoldRef.current = null;
     const payloadDurationMs = readNumberPayload(event.payload, "durationMs");
     const wallDurationMs = Math.round(performance.now() - active.startedAtMs);
-    const durationMs = Math.max(160, payloadDurationMs ?? wallDurationMs);
-    const fadeMs = Math.min(320, Math.max(80, Math.round(durationMs * 0.28)));
     const currentVideoTimeMs = readRuntimeVideoTimeMs(timelineBridge);
     const videoAdvancedMs = Math.max(0, currentVideoTimeMs - active.startVideoTimeMs);
+    const durationMs = Math.max(160, videoAdvancedMs > 0 ? videoAdvancedMs : payloadDurationMs ?? wallDurationMs);
+    const fadeMs = Math.min(320, Math.max(80, Math.round(durationMs * 0.28)));
     const shouldBridgePausedEdit = videoAdvancedMs < Math.min(250, durationMs * 0.5);
 
     void (async () => {
@@ -233,6 +237,7 @@ export function usePlayerV2EffectsWorkflow({
         categoryId: active.categoryId,
         conflictGroup: active.conflictGroup,
         durationMs,
+        effectSpeed: active.effectSpeed,
         effectId: active.effectId,
         endMs: active.startVideoTimeMs + durationMs,
         eventName: active.eventName,

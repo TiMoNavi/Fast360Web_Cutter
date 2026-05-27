@@ -5,10 +5,12 @@ import { useAFrameRuntime } from "@/components/pc_editor/webxr/useAFrameRuntime"
 import { verticalFovFromHorizontal } from "@/components/pc_editor/mask_controller";
 import { useOptionalPcEditorEventBus } from "@/components/pc_editor/events";
 import {
+  getPcEditorRuntimeState,
   usePcEditorCropMaskState,
   usePcEditorEffectInput,
   type PcEditorEffectInputRuntimeState
 } from "@/components/pc_editor/state";
+import { previewClockMs } from "../../timing";
 import {
   resolveOcclusionPreviewTone,
   resolveEffectEventName,
@@ -65,6 +67,7 @@ type AFrameViewportMaskPreviewComponentThis = {
     feather: number;
     fovH: number;
     opacity: number;
+    pattern: number;
     radius: number;
   };
   el: {
@@ -74,6 +77,7 @@ type AFrameViewportMaskPreviewComponentThis = {
   geometry?: GeometryLike;
   material?: ShaderMaterialLike;
   mesh?: MeshLike;
+  startedAtMs?: number;
   uniforms?: Record<string, { value: unknown }>;
 };
 
@@ -176,6 +180,26 @@ function resolveRenderableViewportTone(effect: EffectPreviewState | null): Effec
   });
 }
 
+function resolveRenderablePattern(effect: EffectPreviewState | null) {
+  if (!effect || effect.target !== "viewport-mask") {
+    return 0;
+  }
+
+  if (effect.eventName === "overlay.portal_ring" || effect.effectId === "portal-ring") {
+    return 1;
+  }
+
+  if (effect.eventName === "overlay.time_vortex" || effect.effectId === "time-vortex") {
+    return 2;
+  }
+
+  if (effect.eventName === "overlay.explosion_sticker" || effect.effectId === "explosion-sticker") {
+    return 3;
+  }
+
+  return 0;
+}
+
 function colorForTone(tone: EffectViewportMaskPreviewTone | null) {
   if (tone === "white") {
     return { b: 1, g: 1, r: 1 };
@@ -220,6 +244,7 @@ function makeAttribute(input: {
   feather: number;
   fovH: number;
   opacity: number;
+  pattern?: number;
   radius?: number;
 }) {
   return [
@@ -229,6 +254,7 @@ function makeAttribute(input: {
     `colorR: ${input.color.r}`,
     `colorG: ${input.color.g}`,
     `colorB: ${input.color.b}`,
+    `pattern: ${input.pattern ?? 0}`,
     `fovH: ${input.fovH}`,
     `centerYaw: ${input.centerYaw}`,
     `centerPitch: ${input.centerPitch}`,
@@ -248,6 +274,7 @@ function createFragmentShader() {
     uniform vec2 uFov;
     uniform float uOpacity;
     uniform float uTime;
+    uniform float uPattern;
     uniform float uFeather;
     uniform float uCornerRadius;
     varying vec3 vLocalDirection;
@@ -295,6 +322,45 @@ function createFragmentShader() {
         discard;
       }
 
+      if (uPattern > 0.5) {
+        float r = length(viewport);
+        float angle = atan(viewport.y, viewport.x);
+        float alpha = 0.0;
+        vec3 color = uColor;
+
+        if (uPattern < 1.5) {
+          float ring = exp(-pow((r - 0.58) / 0.065, 2.0));
+          float outerGlow = exp(-pow((r - 0.64) / 0.18, 2.0));
+          float spokes = pow(max(0.0, sin(angle * 18.0 + uTime * 0.006 + r * 10.0) * 0.5 + 0.5), 5.0);
+          float core = 1.0 - smoothstep(0.18, 0.52, r);
+          alpha = windowFill * uOpacity * clamp(ring * (0.62 + spokes * 0.42) + outerGlow * 0.2 + core * 0.1, 0.0, 0.96);
+          color = mix(vec3(0.02, 0.04, 0.12), mix(vec3(1.0, 0.18, 0.92), uColor, 0.58), ring + spokes * ring);
+        } else if (uPattern < 2.5) {
+          float body = 1.0 - smoothstep(0.08, 1.04, r);
+          float spiral = pow(max(0.0, sin(angle * 5.5 - r * 18.0 + uTime * 0.005) * 0.5 + 0.5), 3.0);
+          float cross = pow(max(0.0, sin(angle * -3.0 - r * 12.0 - uTime * 0.004) * 0.5 + 0.5), 4.0);
+          float lanes = spiral * 0.68 + cross * 0.32;
+          float rim = exp(-pow((r - 0.82) / 0.12, 2.0));
+          alpha = windowFill * uOpacity * clamp(body * (0.22 + lanes * 0.58) + rim * 0.24, 0.0, 0.88);
+          color = mix(vec3(0.01, 0.02, 0.08), mix(vec3(0.82, 0.2, 1.0), vec3(0.04, 0.92, 1.0), lanes), body + rim * 0.6);
+        } else {
+          float burst = fract(uTime * 0.00135);
+          float shellRadius = mix(0.14, 0.94, 1.0 - pow(1.0 - burst, 3.0));
+          float shock = exp(-pow((r - shellRadius) / 0.09, 2.0));
+          float core = exp(-pow(r / max(shellRadius * 0.62, 0.08), 2.0)) * (1.0 - burst);
+          float sparks = pow(max(0.0, sin(angle * 31.0 + uTime * 0.018) * 0.5 + 0.5), 10.0) * shock;
+          alpha = windowFill * uOpacity * clamp(core * 0.8 + shock * 0.54 + sparks * 0.65, 0.0, 0.92);
+          color = mix(vec3(1.0, 0.18, 0.02), vec3(1.0, 0.94, 0.45), clamp(core + sparks, 0.0, 1.0));
+        }
+
+        if (alpha <= 0.002) {
+          discard;
+        }
+
+        gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.98));
+        return;
+      }
+
       float insideDistance = max(-edgeDistance, 0.0);
       float innerBody = smoothstep(0.0, 0.34, insideDistance);
       float edgeMist = 1.0 - smoothstep(0.0, 0.18, insideDistance);
@@ -339,6 +405,7 @@ function applyUniforms(instance: AFrameViewportMaskPreviewComponentThis) {
     y: verticalFovFromHorizontal(instance.data.fovH) * DEG_TO_RAD
   };
   uniforms.uOpacity.value = clamp(instance.data.opacity, 0, 1);
+  uniforms.uPattern.value = Math.max(0, instance.data.pattern);
   uniforms.uCornerRadius.value = Math.max(0, instance.data.cornerRadius);
   uniforms.uFeather.value = Math.max(0.001, instance.data.feather);
 }
@@ -391,6 +458,7 @@ export function registerAFrameViewportMaskEffectPreviewComponent() {
       feather: { default: 0.18 },
       fovH: { default: 82 },
       opacity: { default: 0 },
+      pattern: { default: 0 },
       radius: { default: DEFAULT_PREVIEW_RADIUS }
     },
     init: function init(this: AFrameViewportMaskPreviewComponentThis) {
@@ -409,6 +477,7 @@ export function registerAFrameViewportMaskEffectPreviewComponent() {
         uFeather: { value: Math.max(0.001, this.data.feather) },
         uFov: { value: new THREE.Vector2(this.data.fovH * DEG_TO_RAD, verticalFovFromHorizontal(this.data.fovH) * DEG_TO_RAD) },
         uOpacity: { value: clamp(this.data.opacity, 0, 1) },
+        uPattern: { value: Math.max(0, this.data.pattern) },
         uTime: { value: 0 }
       };
       const geometry = new THREE.SphereGeometry(this.data.radius, 96, 48);
@@ -448,7 +517,20 @@ export function registerAFrameViewportMaskEffectPreviewComponent() {
     },
     tick: function tick(this: AFrameViewportMaskPreviewComponentThis, time: number) {
       if (this.uniforms) {
-        this.uniforms.uTime.value = time;
+        if (!this.data.active) {
+          this.startedAtMs = undefined;
+          this.uniforms.uTime.value = 0;
+          return;
+        }
+
+        this.startedAtMs ??= time;
+        const runtimeRates = getPcEditorRuntimeState().rates;
+        this.uniforms.uTime.value = previewClockMs(
+          this.startedAtMs,
+          time,
+          runtimeRates.effectSpeed,
+          runtimeRates.frontendPlaybackRate
+        );
       }
     }
   });
@@ -527,7 +609,8 @@ export function AFrameViewportMaskEffectPreview() {
   const activeEffect = eventEffect ?? runtimeEffect;
   const occlusionTone = resolveRenderableOcclusionTone(activeEffect);
   const tone = occlusionTone ?? resolveRenderableViewportTone(activeEffect);
-  const renderable = tone !== null;
+  const pattern = resolveRenderablePattern(activeEffect);
+  const renderable = tone !== null || pattern > 0;
   const color = colorForTone(tone);
   const opacity = renderable
     ? activeEffect?.mode === "release"
@@ -566,7 +649,8 @@ export function AFrameViewportMaskEffectPreview() {
       cornerRadius: 0.18,
       feather: 0.22,
       fovH,
-      opacity
+      opacity,
+      pattern
     })
   });
 }

@@ -7,6 +7,7 @@
 交互层不直接改 timeline、不直接调播放器兄弟组件、不直接拼后端 payload。业务行为由 `../workflows` 里的订阅者消费事件后完成。
 
 VR 端目标操作映射见：[vr-operation-mapping.md](./vr-operation-mapping.md)。
+VR 真机输入问题分析见：[vr-input-issue-analysis.md](./vr-input-issue-analysis.md)。
 
 ## 当前主路径
 
@@ -17,6 +18,7 @@ apps/web/src/components/pc_editor/Aframe/player-v2/PlayerV2.tsx
   PcEditorEventRoot
   PcEditorRuntimeStateRoot
   useKeyboardEventBindings(playerV2KeyboardBindings)
+  usePcBulletTimeToggle
   usePcViewportKeyboardMotion
   usePcViewportKeyboardFov
   useSphereFovWheelBinding
@@ -57,6 +59,29 @@ apps/web/src/components/pc_editor/Aframe/player-v2/PlayerV2.tsx
   -> player.playback.toggle
   -> 同一个 usePlayerPlaybackWorkflow
 ```
+
+## PC / VR 对应关系速查
+
+这张表只放“同一个剪辑意图在不同输入层里怎么触发”。更细的实现、payload 和状态写入见后面的分节。
+
+| 剪辑意图 | PC 键盘 / 鼠标 | 普通 DOM UI | VR 手柄 / 头显 | VR 3D UI | 统一事件 |
+| --- | --- | --- | --- | --- | --- |
+| 播放 / 暂停 | `Space` | 播放按钮 | 左右 trigger 同时按下 | 播放器 play | `player.playback.toggle` |
+| seek | 鼠标拖进度条 | progress range | trigger 拖空间进度条 | 播放器 progress | `player.playback.seek` |
+| 上 / 下一个视频 | 无默认键 | previous / next | 不占硬件键 | 播放器 previous / next | `player.source.previous/next` |
+| 播放列表 | `P` | playlist 按钮 / 列表项 | trigger 点空间列表 | 播放器 playlist / popup | `player.playlist.*`, `player.source.select` |
+| 开始 / 结束 crop | `Shift+R` / `R` | record 或工作台 start/end | 不占硬件键 | 播放器 record / 工作台 start/end | `editor.crop.start/end` |
+| 丢弃片段 | `Delete` down toggle | 工作台 discard hold 备用 | `X` down toggle | 工作台 discard | `editor.timeline.discard.begin/end` |
+| cut | 无默认键 | 工作台 cut | 不占硬件键 | 工作台 cut | `editor.timeline.cut` |
+| flush | `F` | 工作台 flush | 不占硬件键 | 工作台 flush | `editor.timeline.flush` |
+| render / auto render | 无默认键 | render / auto-render | 不占硬件键 | 工作台 render / auto-render | `editor.render.*` |
+| 子弹时间 | `T` toggle | 播放器状态显示 | `A` toggle | 播放器 Play chip 显示 `BULLET 0.1X` | `player.playback.rate.set` |
+| 播放 / 录制 / 特效倍速 | `Z/X/C` + wheel | rate chip reset | 按住对应 rate chip + 右摇杆 | 播放器 rate chip | `player.*.rate.*`, `editor.effects.speed.*` |
+| 取景中心移动 | `W/A/S/D` 连续运动，或画面点击 | 工作台 yaw / pitch | left grip + 左摇杆；trigger 点背景 | 工作台 yaw / pitch | `editor.viewport.center.*` |
+| 取景跟随中心 | `V` + 左键 | 无 | 双 grip 按住，跟随 head gaze | 无 | `editor.viewport.center.set` |
+| FOV / roll | `Q/E`，`[` / `]` | 工作台 FOV / roll | left grip + 右摇杆 | 工作台 FOV / roll | `editor.viewport.fov.*`, `editor.viewport.roll.*` |
+| 遮罩透明度 | `H` + wheel | opacity slider / clear / deepen | `Y` + 右摇杆 | 工作台 opacity | `editor.mask.opacity.set` |
+| 特效选择 | `Tab` + 数字键 | effects panel | `B` 打开环形菜单，trigger 选择 | effect ring | `editor.effects.*`, `ui.panel.effects.*` |
 
 ## 相关目录职责
 
@@ -113,7 +138,8 @@ runtime.input.controls.pressed
 | --- | --- | --- |
 | `Space` down | `player.playback.toggle` | 忽略 repeat，阻止默认滚动。 |
 | `F` down | `editor.timeline.flush` | payload: `{ reason: "live" }`。 |
-| `Delete` down / up | `editor.timeline.discard.begin` / `editor.timeline.discard.end` | 用于按住丢弃片段。 |
+| `Delete` down | `editor.timeline.discard.begin` | Player V2 中是 toggle：按一次开始丢弃片段，再按一次结束；keyup 只更新 pressed state。 |
+| `T` down | `player.playback.rate.set` | Player V2 子弹时间 toggle：进入 0.1x，再按恢复进入前速度。 |
 | `Shift+R` down | `editor.crop.start` | 开始 crop recording。 |
 | `R` down | `editor.crop.end` | 结束 crop recording。 |
 | `P` down | `player.playlist.toggle` | 打开 / 关闭播放列表。 |
@@ -121,7 +147,7 @@ runtime.input.controls.pressed
 | `Tab` down | `editor.effects.shortcut.open` | Player V2 额外添加。 |
 | `Digit1` 到 `Digit9` down / up | `editor.effects.shortcut.key.down` / `editor.effects.shortcut.key.up` | Player V2 额外添加。 |
 
-`playerV2KeyboardBindings` 会从默认 binding 中移除 `W/A/S/D/Q/E` 的离散 step 版本，因为 Player V2 用连续运动 hook 处理这些键，避免同一个按键同时触发“每帧平滑”和“每次 keydown step”。
+`playerV2KeyboardBindings` 会从默认 binding 中移除 `W/A/S/D/Q/E` 的离散 step 版本，也会移除 `Delete` keyup 的 discard end。Player V2 用连续运动 hook 处理取景键，用 `Delete` keydown toggle 处理丢弃片段，避免同一个按键同时触发两套语义。
 
 ### 连续取景运动
 
@@ -182,16 +208,21 @@ holding / selected
 | `X` + 滚轮 | `player.recording.rate.set` |
 | `C` + 滚轮 | `editor.effects.speed.set` |
 
-### `V` + 指针中心跟随
+### `V` 指针中心跟随 toggle
 
 `../mask_controller/inputs/usePcMaskPointerInput.ts` 使用 `KeyV` 判断是否进入 center-follow：
 
 ```text
-按住 V + 左键按下
+按 V 开启 center-follow mode
+  -> hide cursor
+
+center-follow mode + 左键按下
   -> pointer lock / hide cursor
   -> camera center 连续更新
   -> mask.trackMaskToCenter(...)
-  -> 松开后提交 camera center
+
+再次按 V
+  -> 取消 center-follow mode，提交当前 camera center
 ```
 
 它写入 `runtime.input.pointer`，避免 ray 背景点击在拖拽过程中误触发。
@@ -405,7 +436,7 @@ runtime.input.controls.pressed["vr-{hand}-{buttonId}"]
 | left + right trigger 同时按下 | `trigger` pressed | `player.playback.toggle`，并短暂 suppress 本轮 ray click。 |
 | grip down / up | `grip` pressed true / false | 单 left grip 作为遮罩变换 modifier；双 grip 进入头显中心追踪。 |
 | A down | `a` pressed | 子弹时间 toggle：进入 `0.1x`，再次按下恢复进入前播放速度。 |
-| X down / up | `x` pressed | `editor.timeline.discard.begin` / `editor.timeline.discard.end`。 |
+| X down / up | `x` pressed | X down 发 `editor.timeline.discard.begin`，workflow 用 toggle 语义开始 / 结束；X up 只更新 pressed state。 |
 | Y down / up | `y` pressed | 遮罩透明度 modifier，配合右摇杆上下。 |
 | B down | `b` pressed | `editor.effects.shortcut.open`，进入特效环形菜单。 |
 
@@ -440,16 +471,16 @@ scene triggerup
 | --- | --- | --- | --- | --- |
 | 播放 / 暂停 | `Space` | `player-play-toggle` | `spatial-player-play-toggle` | `dual-trigger` |
 | seek |  | `player-progress` | `spatial-player-progress` |  |
-| 开始录制 | `Shift+R` | `player-record-start`, `crop-start` | `spatial-player-record-start` | `X` 按钮派生 |
-| 结束录制 | `R` | `player-record-end`, `crop-end` | `spatial-player-record-end` | `X` 按钮派生 |
+| 开始录制 | `Shift+R` | `player-record-start`, `crop-start` | `spatial-player-record-start` | 不占硬件键，走 VR UI |
+| 结束录制 | `R` | `player-record-end`, `crop-end` | `spatial-player-record-end` | 不占硬件键，走 VR UI |
 | 上一个视频 |  | `player-previous` | `spatial-player-previous` |  |
 | 下一个视频 |  | `player-next` | `spatial-player-next` |  |
 | 选择视频 |  | `playlist-source-select` | `spatial-playlist-source-select` |  |
 | 播放列表开关 | `P` | `playlist-toggle` | `spatial-playlist-toggle` |  |
 | 关闭播放列表 |  | `playlist-close` | `spatial-playlist-close` |  |
 | flush timeline | `F` | `flush-button` |  |  |
-| 丢弃片段 hold | `Delete` down/up | `discard-button` pointerdown/up |  | `Y` down/up |
-| cut |  | `cut-button` | `cut-target` | `A` |
+| 丢弃片段 toggle | `Delete` down | `discard-button` pointerdown/up 仍可 hold 备用 |  | `X` down toggle |
+| cut |  | `cut-button` | `cut-target` | 不占硬件键，走工作台 UI |
 | FOV step | 默认 Q/E，Player V2 改用连续 hook | `viewport-fov-in/out` | action `mask.fov.step` | thumbstick up/down |
 | yaw / pitch step | 默认 WASD，Player V2 改用连续 hook | `viewport-yaw-*`, `viewport-pitch-*` | action `mask.yaw.step`, `mask.pitch.step` | thumbstick left/right |
 | roll step | `[` / `]` | `viewport-roll-*` |  |  |

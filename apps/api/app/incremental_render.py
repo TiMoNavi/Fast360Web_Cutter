@@ -139,14 +139,16 @@ def _render_segment_worker(
             ).fetchone()
             if not session:
                 raise RuntimeError("Session not found")
+            session_data = dict(session)
 
             video = conn.execute(
-                "SELECT stored_filename, duration_ms FROM videos WHERE id = ?", (session["video_id"],)
+                "SELECT stored_filename, duration_ms FROM videos WHERE id = ?", (session_data["video_id"],)
             ).fetchone()
             if not video:
                 raise RuntimeError("Video not found")
+            video_data = dict(video)
 
-            points = conn.execute(
+            point_rows = conn.execute(
                 """
                 SELECT * FROM view_path_points
                 WHERE session_id = ?
@@ -154,6 +156,7 @@ def _render_segment_worker(
                 """,
                 (session_id,),
             ).fetchall()
+            points = [dict(point) for point in point_rows]
 
         if cancel_event.is_set():
             _mark_cancelled(segment_id)
@@ -175,7 +178,7 @@ def _render_segment_worker(
 
         from .storage import VIDEOS_DIR
 
-        source_path = VIDEOS_DIR / video["stored_filename"]
+        source_path = VIDEOS_DIR / video_data["stored_filename"]
         output_path = EXPORTS_DIR / f"{segment_id}.mp4"
         work_dir = TMP_DIR / segment_id
         work_dir.mkdir(parents=True, exist_ok=True)

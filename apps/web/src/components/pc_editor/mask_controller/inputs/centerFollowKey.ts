@@ -1,17 +1,21 @@
-import { getPcEditorRuntimeState } from "../../state";
-
 export const PC_MASK_CENTER_FOLLOW_KEY_CODE = "KeyV";
 export const PC_MASK_CENTER_FOLLOW_KEY_LABEL = "V";
 
+let pcMaskCenterFollowModeActive = false;
+
+export function setPcMaskCenterFollowMode(active: boolean) {
+  pcMaskCenterFollowModeActive = active;
+}
+
+export function togglePcMaskCenterFollowMode() {
+  pcMaskCenterFollowModeActive = !pcMaskCenterFollowModeActive;
+  return pcMaskCenterFollowModeActive;
+}
+
+export function isPcMaskCenterFollowModeActive() {
+  return pcMaskCenterFollowModeActive;
+}
+
 export function isPcMaskCenterFollowKeyPressed() {
-  const pressed = getPcEditorRuntimeState().keyboard.pressed;
-
-  if (pressed[PC_MASK_CENTER_FOLLOW_KEY_CODE]) {
-    return true;
-  }
-
-  return Object.values(pressed).some((keyState) =>
-    keyState.code === PC_MASK_CENTER_FOLLOW_KEY_CODE ||
-    keyState.key.toLowerCase() === "v"
-  );
+  return pcMaskCenterFollowModeActive;
 }
