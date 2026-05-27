@@ -66,6 +66,60 @@ function Invoke-LocalProbe {
   }
 }
 
+function Invoke-CurlProbe {
+  param(
+    [string]$Url,
+    [int]$TimeoutSec = 4
+  )
+
+  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+  if (-not $curl) {
+    return $null
+  }
+
+  try {
+    $lines = & $curl.Source -k -I --max-time $TimeoutSec $Url 2>$null
+    if (-not $lines) {
+      return $null
+    }
+
+    $statusLine = $lines | Where-Object { $_ -match "^HTTP/" } | Select-Object -Last 1
+    if (-not $statusLine -or $statusLine -notmatch "^HTTP/\S+\s+(\d+)") {
+      return $null
+    }
+    $statusCode = [int]$matches[1]
+
+    $headers = @{}
+    foreach ($line in $lines) {
+      if ($line -match "^([^:]+):\s*(.*)$") {
+        $headers[$matches[1]] = $matches[2]
+      }
+    }
+
+    return [pscustomobject]@{
+      StatusCode = $statusCode
+      Headers = $headers
+      Content = ""
+    }
+  } catch {
+    return $null
+  }
+}
+
+function Invoke-ServiceProbe {
+  param(
+    [string]$Url,
+    [int]$TimeoutSec = 4
+  )
+
+  $response = Invoke-LocalProbe -Url $Url -TimeoutSec $TimeoutSec
+  if ($response) {
+    return $response
+  }
+
+  return Invoke-CurlProbe -Url $Url -TimeoutSec $TimeoutSec
+}
+
 function Get-PortCandidates {
   param(
     [hashtable]$EnvValues,
@@ -96,7 +150,7 @@ function Find-Frontend {
 
     foreach ($scheme in @("http", "https")) {
       $url = "${scheme}://127.0.0.1:$port/"
-      $response = Invoke-LocalProbe -Url $url
+      $response = Invoke-ServiceProbe -Url $url
       if (-not $response) {
         continue
       }
@@ -139,7 +193,7 @@ function Find-Backend {
 
     foreach ($path in @("/health", "/openapi.json", "/docs")) {
       $url = "http://127.0.0.1:$port$path"
-      $response = Invoke-LocalProbe -Url $url
+      $response = Invoke-ServiceProbe -Url $url
       if (-not $response) {
         continue
       }
