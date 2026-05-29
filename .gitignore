@@ -15,6 +15,7 @@ build/
 # Runtime files
 .env
 .env.local
+.codex-temp/
 .logs/
 logs/
 backups/
@@ -46,6 +47,10 @@ public-tunnel/generated/
 # Generated screenshots and presentation bundles
 quest-*.png
 quest-*.xml
+docs/hackathon-narrative.7z
+docs/hackathon-narrative/05-speaker-script-v3-5min.pdf
+docs/hackathon-narrative/05-speaker-script-v3-5min.txt
+docs/hackathon-narrative/PPT/
 docs/hackathon-narrative/submission/presentation.zip
 docs/hackathon-narrative/submission/presentation/
 apps/web/*-check.png

@@ -77,10 +77,11 @@ apps/web/src/components/pc_editor/Aframe/player-v2/PlayerV2.tsx
 | render / auto render | 无默认键 | render / auto-render | 不占硬件键 | 工作台 render / auto-render | `editor.render.*` |
 | 子弹时间 | `T` toggle | 播放器状态显示 | `A` toggle | 播放器 Play chip 显示 `BULLET 0.1X` | `player.playback.rate.set` |
 | 播放 / 录制 / 特效倍速 | `Z/X/C` + wheel | rate chip reset | 按住对应 rate chip + 右摇杆 | 播放器 rate chip | `player.*.rate.*`, `editor.effects.speed.*` |
-| 取景中心移动 | `W/A/S/D` 连续运动，或画面点击 | 工作台 yaw / pitch | left grip + 左摇杆；trigger 点背景 | 工作台 yaw / pitch | `editor.viewport.center.*` |
-| 取景跟随中心 | `V` + 左键 | 无 | 双 grip 按住，跟随 head gaze | 无 | `editor.viewport.center.set` |
-| FOV / roll | `Q/E`，`[` / `]` | 工作台 FOV / roll | left grip + 右摇杆 | 工作台 FOV / roll | `editor.viewport.fov.*`, `editor.viewport.roll.*` |
-| 遮罩透明度 | `H` + wheel | opacity slider / clear / deepen | `Y` + 右摇杆 | 工作台 opacity | `editor.mask.opacity.set` |
+| 取景中心移动 | `W/A/S/D` 连续运动，或画面点击 | 工作台 yaw / pitch | 左摇杆直接平滑 step；trigger 点背景 | 工作台 yaw / pitch | `editor.viewport.center.*` |
+| 取景跟随中心 | `V` + 左键 | 无 | 暂不占手柄，先保留 UI / PC 路径 | 无 | `editor.viewport.center.set` |
+| FOV | `Q/E` | 工作台 FOV | 暂不占摇杆，保留工作台 FOV | 工作台 FOV | `editor.viewport.fov.*` |
+| roll | `[` / `]` | 工作台 roll | 暂不占手柄摇杆 | 工作台 roll | `editor.viewport.roll.*` |
+| 遮罩透明度 | `H` + wheel | opacity slider / clear / deepen | 右摇杆上下直接平滑调 opacity | 工作台 opacity | `editor.mask.opacity.set` |
 | 特效选择 | `Tab` + 数字键 | effects panel | `B` 打开环形菜单，trigger 选择 | effect ring | `editor.effects.*`, `ui.panel.effects.*` |
 
 ## 相关目录职责
@@ -434,23 +435,23 @@ runtime.input.controls.pressed["vr-{hand}-{buttonId}"]
 | --- | --- | --- |
 | trigger down / up | `trigger` pressed true / false | 单 trigger 只做 ray select / click。 |
 | left + right trigger 同时按下 | `trigger` pressed | `player.playback.toggle`，并短暂 suppress 本轮 ray click。 |
-| grip down / up | `grip` pressed true / false | 单 left grip 作为遮罩变换 modifier；双 grip 进入头显中心追踪。 |
+| grip down / up | `grip` pressed true / false | 只同步状态；当前遮罩基线不依赖 grip。 |
 | A down | `a` pressed | 子弹时间 toggle：进入 `0.1x`，再次按下恢复进入前播放速度。 |
 | X down / up | `x` pressed | X down 发 `editor.timeline.discard.begin`，workflow 用 toggle 语义开始 / 结束；X up 只更新 pressed state。 |
-| Y down / up | `y` pressed | 遮罩透明度 modifier，配合右摇杆上下。 |
+| Y down / up | `y` pressed | 只同步按钮状态；当前透明度由右摇杆直接控制。 |
 | B down | `b` pressed | `editor.effects.shortcut.open`，进入特效环形菜单。 |
 
 ### 摇杆
 
 | 输入 | event |
 | --- | --- |
-| left grip + left thumbstick left / right | axes sampler 发 `editor.viewport.center.set`，fallback 离散事件发 yaw -5 / +5。 |
-| left grip + left thumbstick up / down | axes sampler 发 `editor.viewport.center.set`，fallback 离散事件发 pitch +5 / -5。 |
-| left grip + right thumbstick up / down | axes sampler 发 `editor.viewport.fov.set`，fallback 离散事件发 FOV -5 / +5。 |
-| left grip + right thumbstick left / right | axes sampler 发 `editor.viewport.roll.set`，fallback 离散事件发 roll -5 / +5。 |
-| Y + right thumbstick up / down | `editor.mask.opacity.set`，连续 axes 调节，范围 0 - 0.95。 |
+| left thumbstick left / right | 低通后直接写 `viewTarget.center.yaw`，yaw 平滑移动。 |
+| left thumbstick up / down | 低通后直接写 `viewTarget.center.pitch`，pitch 平滑移动。 |
+| right thumbstick up / down | 低通后直接写 `viewTarget.maskOpacity`，opacity 平滑变化。 |
 | hold Play / Record / FX rate chip + right thumbstick up / down | `player.playback.rate.set` / `player.recording.rate.set` / `editor.effects.speed.set`，小推 +/- 0.05，大推 +/- 0.25，范围 0.25x - 4.00x。 |
-| left grip + right grip | `editor.viewport.center.set`，持续跟随 head gaze center，松开时 `commit: true`。 |
+| grip + thumbstick | 暂不作为必要组合，避免真机 hold 状态不可靠导致误判。 |
+
+沉浸模式里的左摇杆中心移动、右摇杆透明度现在直接写 `setPcEditorViewTarget()`，不再绕 PC workflow 的 `editor.viewport.center.step` / `editor.mask.opacity.set` 事件链。这个直接写入只在 `xrSession.presenting === true` 的空间层启用，非沉浸 PC 操作仍走原路径。
 
 ### 手柄 ray 取景
 

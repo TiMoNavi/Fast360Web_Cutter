@@ -251,6 +251,10 @@ export function usePcMaskRayTargetInput({
       mask.moveMaskTo(center, 520 / getPcEditorFrontendPlaybackRate());
     };
 
+    const moveTriggerToCenter = (center: PcViewCenter) => {
+      mask.setPreviewCenter(center);
+    };
+
     const handleBackgroundClick = (event: Event) => {
       const pointer = getPcEditorRuntimeState().input.pointer;
       if (isPcMaskCenterFollowKeyPressed() || pointer.primaryDown || pointer.draggingMask) {
@@ -261,14 +265,13 @@ export function usePcMaskRayTargetInput({
       const intersection = readEventIntersection(event);
       const target = elementFromIntersection(intersection) ?? (event.target instanceof HTMLElement ? event.target : null);
       const controllerTarget = readControllerElementFromEvent(event, scene);
-      const controllerCenter = controllerTarget ? readControllerCenter(controllerTarget) : null;
 
-      if (!isBackgroundHitTarget(target) || (!intersection?.point && !controllerCenter)) {
+      if (!isBackgroundHitTarget(target) || !intersection?.point) {
         return;
       }
 
       event.stopPropagation();
-      const center = controllerCenter ?? readBackgroundHitCenter(intersection);
+      const center = readBackgroundHitCenter(intersection);
 
       if (center) {
         moveToCenter(center);
@@ -290,17 +293,17 @@ export function usePcMaskRayTargetInput({
       }
 
       if (isBackgroundHitTarget(hitElement)) {
-        const center = readControllerCenter(controllerTarget) ?? readBackgroundHitCenter(intersection);
+        const center = readBackgroundHitCenter(intersection) ?? readControllerCenter(controllerTarget);
 
         if (center) {
-          moveToCenter(center);
+          moveTriggerToCenter(center);
         }
         return;
       }
 
       const controllerCenter = readControllerCenter(controllerTarget);
       if (controllerCenter) {
-        moveToCenter(controllerCenter);
+        moveTriggerToCenter(controllerCenter);
       }
     };
 

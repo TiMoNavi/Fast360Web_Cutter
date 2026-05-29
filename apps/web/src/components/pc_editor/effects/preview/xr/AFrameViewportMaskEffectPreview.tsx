@@ -8,6 +8,7 @@ import {
   getPcEditorRuntimeState,
   usePcEditorCropMaskState,
   usePcEditorEffectInput,
+  usePcEditorViewTarget,
   type PcEditorEffectInputRuntimeState
 } from "@/components/pc_editor/state";
 import { previewClockMs } from "../../timing";
@@ -541,6 +542,7 @@ export function AFrameViewportMaskEffectPreview() {
   const eventBus = useOptionalPcEditorEventBus();
   const cropMask = usePcEditorCropMaskState();
   const effectInput = usePcEditorEffectInput();
+  const viewTarget = usePcEditorViewTarget();
   const [eventEffect, setEventEffect] = useState<EffectPreviewState | null>(null);
   const [componentRegistered, setComponentRegistered] = useState(false);
   const hideTimerRef = useRef<number | null>(null);
@@ -631,8 +633,8 @@ export function AFrameViewportMaskEffectPreview() {
             ? 0.92
             : 0.36
     : 0;
-  const fovH = cropMask?.fov.h ?? 82;
-  const center = cropMask?.center ?? { pitch: 0, yaw: 0 };
+  const fovH = viewTarget?.fov.h ?? cropMask?.fov.h ?? 82;
+  const center = viewTarget?.center ?? cropMask?.center ?? { pitch: 0, yaw: 0 };
 
   if (!ready || !componentRegistered) {
     return null;

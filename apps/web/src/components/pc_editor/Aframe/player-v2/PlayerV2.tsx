@@ -28,6 +28,11 @@ import {
   usePcMaskRayTargetInput
 } from "@/components/pc_editor/mask_controller";
 import {
+  AFrameVrMaskRig,
+  registerAFrameVrCropViewportMaskComponents,
+  useVrImmersiveMaskController
+} from "@/components/pc_editor/vr_mask_controller";
+import {
   PcEditorRuntimeStateRoot,
   getPcEditorRuntimeState,
   setPcEditorDiscardState,
@@ -192,6 +197,7 @@ function PlayerV2Content({ model }: PlayerV2Props) {
     }
 
     registerAFrameCropViewportMaskComponents();
+    registerAFrameVrCropViewportMaskComponents();
     setCropMaskRuntimeReady(true);
   }, [aframeRuntime.ready]);
 
@@ -315,6 +321,22 @@ function PlayerV2Content({ model }: PlayerV2Props) {
 
   const emitMaskGestureCenter = useCallback(
     (center: PcViewCenter, phase: "change" | "end" = "end") => {
+      const runtime = getPcEditorRuntimeState();
+      const currentViewTarget = runtime.viewTarget;
+
+      setPcEditorViewTarget({
+        center,
+        fov: currentViewTarget?.fov ?? {
+          h: view.fov,
+          v: view.fov
+        },
+        input: currentViewTarget?.input ?? "workflow",
+        locked: currentViewTarget?.locked ?? view.maskLocked,
+        maskOpacity: currentViewTarget?.maskOpacity ?? view.maskOpacity,
+        roll: currentViewTarget?.roll ?? view.maskRoll,
+        source: currentViewTarget?.source ?? "workflow",
+        videoTimeMs: runtime.playback?.currentTimeMs ?? view.currentTimeMs
+      });
       emitEvent({
         type: "editor.viewport.center.set",
         payload: {
@@ -331,7 +353,7 @@ function PlayerV2Content({ model }: PlayerV2Props) {
         }
       });
     },
-    [emitEvent]
+    [emitEvent, view.currentTimeMs, view.fov, view.maskLocked, view.maskOpacity, view.maskRoll]
   );
 
   const emitCameraGestureCenter = useCallback(
@@ -477,7 +499,15 @@ function PlayerV2Content({ model }: PlayerV2Props) {
   });
 
   usePcMaskRayTargetInput({
+    enabled: !immersive3DUiEnabled,
     mask: maskOperations,
+    sceneReady: view.sceneReady,
+    sceneRef
+  });
+
+  useVrImmersiveMaskController({
+    controllerInputEnabled: true,
+    enabled: immersive3DUiEnabled,
     sceneReady: view.sceneReady,
     sceneRef
   });
@@ -563,14 +593,14 @@ function PlayerV2Content({ model }: PlayerV2Props) {
       <div
         className={styles.xrStage}
         data-testid="player-v2-xr-stage"
-        onClickCapture={pointerInput.handleMaskClickCapture}
-        onMouseDownCapture={pointerInput.handleMaskMouseDownCapture}
-        onPointerCancel={pointerInput.stopMaskPointerDrag}
-        onPointerDown={pointerInput.handleMaskPointerDown}
-        onPointerDownCapture={pointerInput.handleMaskPointerDownCapture}
-        onPointerLeave={pointerInput.handleMaskPointerLeave}
-        onPointerMove={pointerInput.handleMaskPointerMove}
-        onPointerUp={pointerInput.handleMaskPointerUp}
+        onClickCapture={!immersive3DUiEnabled ? pointerInput.handleMaskClickCapture : undefined}
+        onMouseDownCapture={!immersive3DUiEnabled ? pointerInput.handleMaskMouseDownCapture : undefined}
+        onPointerCancel={!immersive3DUiEnabled ? pointerInput.stopMaskPointerDrag : undefined}
+        onPointerDown={!immersive3DUiEnabled ? pointerInput.handleMaskPointerDown : undefined}
+        onPointerDownCapture={!immersive3DUiEnabled ? pointerInput.handleMaskPointerDownCapture : undefined}
+        onPointerLeave={!immersive3DUiEnabled ? pointerInput.handleMaskPointerLeave : undefined}
+        onPointerMove={!immersive3DUiEnabled ? pointerInput.handleMaskPointerMove : undefined}
+        onPointerUp={!immersive3DUiEnabled ? pointerInput.handleMaskPointerUp : undefined}
         onWheel={handleSphereFovWheel}
       >
         {cropMaskRuntimeReady ? (
@@ -603,15 +633,25 @@ function PlayerV2Content({ model }: PlayerV2Props) {
             videoId={videoId}
             videoRef={videoRef}
           >
-            <AFrameCropViewportRig
-              center={view.maskCenter}
-              fovH={view.fov}
-              legacyWindowCommands={false}
-              locked={view.maskLocked}
-              opacity={view.maskOpacity}
-              roll={view.maskRoll}
-              sourceVideoId={videoId}
-            />
+            {immersive3DUiEnabled ? (
+              <AFrameVrMaskRig
+                center={view.maskCenter}
+                fovH={view.fov}
+                locked={view.maskLocked}
+                opacity={view.maskOpacity}
+                roll={view.maskRoll}
+              />
+            ) : (
+              <AFrameCropViewportRig
+                center={view.maskCenter}
+                fovH={view.fov}
+                legacyWindowCommands={false}
+                locked={view.maskLocked}
+                opacity={view.maskOpacity}
+                roll={view.maskRoll}
+                sourceVideoId={videoId}
+              />
+            )}
             <AFrameViewportMaskEffectPreview />
             <AFrameProjectionFlightPreview
               cameraRef={cameraRef}

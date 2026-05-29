@@ -118,6 +118,16 @@ async function openForcedImmersivePlayer(page: Page) {
   await expect(page.getByTestId("arwes-workbench-spatial-table")).toBeAttached();
 }
 
+async function openForcedImmersivePlayerWithMaskProbe(page: Page) {
+  await registerTestUser(page);
+  const response = await page.goto("/xr/player-v2?forceImmersiveUi=1&vrMaskProbe=1", { waitUntil: "commit" });
+
+  expect(response?.status()).toBeLessThan(400);
+  await expect(page.getByTestId("player-v2-xr-stage")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("aframe-crop-mask-preview")).toBeAttached({ timeout: 30_000 });
+  await expect(page.getByTestId("player-v2-immersive-state")).toBeAttached();
+}
+
 async function openDebugImmersiveEntryPlayer(page: Page) {
   const response = await page.goto("/xr/player-v2?xrDebug=1", { waitUntil: "commit" });
 
@@ -175,6 +185,13 @@ async function dispatchRightControllerTriggerUp(page: Page) {
 }
 
 async function readMaskCenter(page: Page): Promise<Center> {
+  await page.waitForFunction(() => {
+    const el = document.querySelector("[data-testid='aframe-crop-mask-preview']") as
+      | (Element & { components?: Record<string, { center?: Center }> })
+      | null;
+    return Boolean(el?.components?.["pc-crop-viewport-mask"]?.center);
+  }, { timeout: 30_000 });
+
   return page.evaluate(() => {
     const el = document.querySelector("[data-testid='aframe-crop-mask-preview']") as
       | (Element & { components?: Record<string, { center?: Center }> })
@@ -192,11 +209,86 @@ async function readMaskCenter(page: Page): Promise<Center> {
   });
 }
 
+async function setMockXrControllerState(
+  page: Page,
+  state: {
+    leftAxes?: number[];
+    leftGrip?: boolean;
+    rightAxes?: number[];
+    rightGrip?: boolean;
+  }
+) {
+  await page.waitForFunction(() => {
+    const scene = document.querySelector("a-scene") as (HTMLElement & { hasLoaded?: boolean }) | null;
+    return Boolean(scene?.hasLoaded);
+  });
+  await page.evaluate((nextState) => {
+    type MockGamepad = {
+      axes: number[];
+      buttons: Array<{ pressed: boolean; touched: boolean; value: number }>;
+    };
+    type MockInputSource = {
+      gamepad: MockGamepad;
+      handedness: "left" | "right";
+    };
+    type MockScene = HTMLElement & {
+      __playerV2MockXrInputSources?: MockInputSource[];
+      xrSession?: {
+        inputSources: MockInputSource[];
+      };
+    };
+
+    const createButtons = (gripPressed: boolean) =>
+      Array.from({ length: 6 }, (_, index) => {
+        const pressed = index === 1 && gripPressed;
+        return {
+          pressed,
+          touched: pressed,
+          value: pressed ? 1 : 0
+        };
+      });
+
+    const scene = document.querySelector("a-scene") as MockScene | null;
+    if (!scene) {
+      throw new Error("A-Frame scene unavailable");
+    }
+
+    const left: MockInputSource = {
+      gamepad: {
+        axes: nextState.leftAxes ?? [0, 0, 0, 0],
+        buttons: createButtons(nextState.leftGrip === true)
+      },
+      handedness: "left"
+    };
+    const right: MockInputSource = {
+      gamepad: {
+        axes: nextState.rightAxes ?? [0, 0, 0, 0],
+        buttons: createButtons(nextState.rightGrip === true)
+      },
+      handedness: "right"
+    };
+
+    scene.__playerV2MockXrInputSources = [left, right];
+    Object.defineProperty(scene, "xrSession", {
+      configurable: true,
+      value: {
+        inputSources: scene.__playerV2MockXrInputSources
+      }
+    });
+  }, state);
+}
+
 async function clickSpatialTarget(page: Page, testId: string) {
   await page.evaluate((nextTestId) => {
     const target = document.querySelector(`[data-testid="${nextTestId}"]`);
     target?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   }, testId);
+}
+
+async function openTransitionEffectRingLevel(page: Page) {
+  await expect(page.getByTestId("spatial-effect-ring-hit-category-transition")).toBeAttached();
+  await clickSpatialTarget(page, "spatial-effect-ring-hit-category-transition");
+  await expect(page.getByTestId("spatial-effect-ring-hit-effect-vhs-blank")).toBeAttached();
 }
 
 async function forceSceneCameraDirection(page: Page, center: Center) {
@@ -290,6 +382,7 @@ async function aimRightControllerAtMaskCenter(page: Page, center: Center) {
                 object: {
                   el?: HTMLElement;
                 };
+                point?: BrowserVector3;
               }>;
               raycaster?: {
                 ray?: {
@@ -345,6 +438,10 @@ async function aimRightControllerAtMaskCenter(page: Page, center: Center) {
     const objectDirection = new THREE.Vector3();
     controller.object3D.getWorldDirection(objectDirection);
     const rayDirection = raycaster?.raycaster?.ray?.direction ?? null;
+    const backgroundHit = raycaster?.intersections?.find((hit) =>
+      hit.object.el?.getAttribute("data-testid") === "pc-mask-background-hit-target"
+    );
+    const backgroundHitDirection = backgroundHit?.point ? backgroundHit.point.clone().sub(sphereCenter).normalize() : null;
     const hits = (raycaster?.intersections ?? []).slice(0, 8).map((hit) => ({
       distance: Number(hit.distance.toFixed(4)),
       testId: hit.object.el?.getAttribute("data-testid") ?? null
@@ -353,6 +450,13 @@ async function aimRightControllerAtMaskCenter(page: Page, center: Center) {
     return {
       closestTestId: hits[0]?.testId ?? null,
       hitTestIds: hits.map((hit) => hit.testId),
+      backgroundHitDirection: backgroundHitDirection
+        ? {
+            x: backgroundHitDirection.x,
+            y: backgroundHitDirection.y,
+            z: backgroundHitDirection.z
+          }
+        : null,
       objectDirection: {
         x: objectDirection.x,
         y: objectDirection.y,
@@ -587,13 +691,11 @@ test("Player V2 forced immersive mode exposes 3D UI and routes Quest controller 
   await dispatchControllerEvent(page, "abuttondown");
   await expect(state).toHaveAttribute("data-right-a-pressed", "true");
 
-  const initialFov = Number(await state.getAttribute("data-mask-fov"));
-  await dispatchControllerEvent(page, "gripdown", "left");
-  await dispatchControllerEvent(page, "thumbstickup");
+  const initialPitch = Number(await state.getAttribute("data-mask-pitch"));
+  await dispatchControllerEvent(page, "thumbstickup", "left");
   await expect
-    .poll(async () => Number(await state.getAttribute("data-mask-fov")))
-    .toBeLessThan(initialFov);
-  await dispatchControllerEvent(page, "gripup", "left");
+    .poll(async () => Number(await state.getAttribute("data-mask-pitch")))
+    .toBeGreaterThan(initialPitch + 3);
 
   await dispatchControllerEvent(page, "xbuttondown");
   await expect(state).toHaveAttribute("data-right-x-pressed", "true");
@@ -610,7 +712,7 @@ test("Player V2 forced immersive mode exposes 3D UI and routes Quest controller 
   await clickSpatialTarget(page, "arwes-workbench-region-hit-start");
   await expect(state).toHaveAttribute("data-recording-active", "false");
 
-  await expect(page.getByTestId("spatial-effect-ring-hit-effect-vhs-blank")).toBeAttached();
+  await openTransitionEffectRingLevel(page);
   await clickSpatialTarget(page, "spatial-effect-ring-hit-effect-vhs-blank");
   await expect(state).toHaveAttribute("data-effect-mode", "selected");
 
@@ -713,17 +815,20 @@ test("Player V2 forced immersive right controller ray hits the XR workbench tabl
   });
 });
 
-test("Player V2 forced immersive background trigger uses the controller ray direction", async ({ page }) => {
+test("Player V2 forced immersive background trigger uses the background sphere hit point", async ({ page }) => {
   await openForcedImmersivePlayer(page);
 
   const expectedCenter = { pitch: -14, yaw: 56 };
   const probe = await aimRightControllerAtMaskCenter(page, expectedCenter);
   expect(probe.closestTestId).toBe("pc-mask-background-hit-target");
   expect(probe.rayDirection).not.toBeNull();
+  expect(probe.backgroundHitDirection).not.toBeNull();
 
-  if (!probe.rayDirection) {
+  if (!probe.rayDirection || !probe.backgroundHitDirection) {
     throw new Error("Right controller ray direction unavailable");
   }
+
+  const expectedHitCenter = directionToCenter(probe.backgroundHitDirection);
 
   expect(angularDistance(directionToCenter(probe.rayDirection), expectedCenter)).toBeLessThan(0.8);
   expect(angularDistance(directionToCenter({
@@ -734,22 +839,72 @@ test("Player V2 forced immersive background trigger uses the controller ray dire
 
   await dispatchRightControllerTriggerUp(page);
   await expect
-    .poll(async () => angularDistance(await readMaskCenter(page), expectedCenter), { timeout: 5000 })
+    .poll(async () => angularDistance(await readMaskCenter(page), expectedHitCenter), { timeout: 5000 })
     .toBeLessThan(1.5);
 });
 
-test("Player V2 forced immersive dual grip follows the active XR camera gaze", async ({ page }) => {
+test("Player V2 forced immersive mask probe drives the mask without controller input", async ({ page }) => {
+  await openForcedImmersivePlayerWithMaskProbe(page);
+
+  const start = await readMaskCenter(page);
+  await expect
+    .poll(async () => angularDistance(await readMaskCenter(page), start), { timeout: 5000 })
+    .toBeGreaterThan(4);
+
+  const state = page.getByTestId("player-v2-immersive-state");
+  const opacity = Number(await state.getAttribute("data-mask-opacity"));
+  await expect
+    .poll(async () => Math.abs(Number(await state.getAttribute("data-mask-opacity")) - opacity), { timeout: 5000 })
+    .toBeGreaterThan(0.03);
+});
+
+test("Player V2 forced immersive left stick uses the smoothed center step path", async ({ page }) => {
   await openForcedImmersivePlayer(page);
 
-  const expectedCenter = { pitch: 18, yaw: -42 };
-  await forceSceneCameraDirection(page, expectedCenter);
-  await dispatchDualGrip(page, "gripdown");
+  await page.evaluate(() => {
+    const el = document.querySelector("[data-testid='aframe-crop-mask-preview']");
+    el?.setAttribute("pc-crop-viewport-mask", "locked: false");
+  });
+
+  const start = await readMaskCenter(page);
+  await setMockXrControllerState(page, {
+    leftAxes: [0, 0, 0.78, -0.62]
+  });
 
   await expect
-    .poll(async () => angularDistance(await readMaskCenter(page), expectedCenter), { timeout: 5000 })
-    .toBeLessThan(1.5);
+    .poll(async () => angularDistance(await readMaskCenter(page), start), { timeout: 5000 })
+    .toBeGreaterThan(3);
 
-  await dispatchDualGrip(page, "gripup");
+  const moved = await readMaskCenter(page);
+  expect(moved.yaw).toBeGreaterThan(start.yaw + 1);
+  expect(moved.pitch).toBeGreaterThan(start.pitch + 1);
+  await expect(page.getByTestId("player-v2-immersive-state")).toHaveAttribute("data-mask-locked", "true");
+
+  await setMockXrControllerState(page, {
+    leftAxes: [0, 0, 0, 0]
+  });
+  const released = await readMaskCenter(page);
+  await page.waitForTimeout(220);
+  const afterRelease = await readMaskCenter(page);
+  expect(angularDistance(afterRelease, released)).toBeLessThan(0.8);
+});
+
+test("Player V2 forced immersive right stick uses the smoothed opacity path", async ({ page }) => {
+  await openForcedImmersivePlayer(page);
+
+  const state = page.getByTestId("player-v2-immersive-state");
+  const initialOpacity = Number(await state.getAttribute("data-mask-opacity"));
+  await setMockXrControllerState(page, {
+    rightAxes: [0, 0, 0, -0.82]
+  });
+
+  await expect
+    .poll(async () => Number(await state.getAttribute("data-mask-opacity")), { timeout: 5000 })
+    .toBeGreaterThan(initialOpacity + 0.03);
+
+  await setMockXrControllerState(page, {
+    rightAxes: [0, 0, 0, 0]
+  });
 });
 
 test("Player V2 MetaVR debug entry keeps keyboard recording and writes backend path patches", async ({ page }) => {
@@ -814,7 +969,7 @@ test("Player V2 immersive effect ring writes a real backend effect event", async
   await dispatchControllerEvent(page, "bbuttondown");
   await expect(state).toHaveAttribute("data-effect-mode", "category");
   await expect(page.getByTestId("spatial-effect-ring-menu")).toBeAttached();
-  await expect(page.getByTestId("spatial-effect-ring-hit-effect-vhs-blank")).toBeAttached();
+  await openTransitionEffectRingLevel(page);
 
   const effectEventResponse = page.waitForResponse((response) => {
     if (response.request().method() !== "POST") {

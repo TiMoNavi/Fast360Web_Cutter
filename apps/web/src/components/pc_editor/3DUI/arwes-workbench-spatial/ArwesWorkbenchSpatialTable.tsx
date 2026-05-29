@@ -96,8 +96,14 @@ const WORKBENCH_REGION_HOLD_COMMANDS: Partial<Record<string, WorkbenchRegionHold
   MORE_DROP: () => ({ begin: { type: "timeline.discard.begin" }, end: { type: "timeline.discard.end" } })
 };
 
-const WORKBENCH_RAY_BLOCKER_LAYER_Z = 0.038;
-const WORKBENCH_REGION_HIT_LAYER_Z = 0.058;
+const WORKBENCH_RAY_BLOCKER_LAYER_Z = 0.032;
+const WORKBENCH_RAY_BLOCKER_DEPTH = 0.016;
+const WORKBENCH_REGION_HIT_LAYER_Z = 0.068;
+const WORKBENCH_REGION_HIT_DEPTH = 0.046;
+const WORKBENCH_REGION_HIT_PADDING_X_PX = 20;
+const WORKBENCH_REGION_HIT_PADDING_Y_PX = 34;
+const WORKBENCH_REGION_MIN_HIT_WIDTH_PX = 88;
+const WORKBENCH_REGION_MIN_HIT_HEIGHT_PX = 78;
 
 function createTextureCanvas(id: string) {
   const existing = document.getElementById(id) as HTMLCanvasElement | null;
@@ -142,14 +148,22 @@ function regionTargetId(regionId: string) {
   return `spatial-workbench-${regionId.toLowerCase().replaceAll("_", "-")}`;
 }
 
+function regionHitSize(region: ArwesWorkbenchRegion) {
+  return worldSizeFromPx(
+    Math.max(region.w + WORKBENCH_REGION_HIT_PADDING_X_PX, WORKBENCH_REGION_MIN_HIT_WIDTH_PX),
+    Math.max(region.h + WORKBENCH_REGION_HIT_PADDING_Y_PX, WORKBENCH_REGION_MIN_HIT_HEIGHT_PX)
+  );
+}
+
 function WorkbenchRayBlocker() {
   const ref = useSpatialRayBlockerEvents();
 
-  return createElement("a-plane", {
+  return createElement("a-box", {
     className: "clickable",
     "data-ray-blocking": "true",
     [SPATIAL_UI_HIT_ATTRIBUTE]: "true",
     "data-testid": "arwes-workbench-spatial-table-hit-plane",
+    depth: String(WORKBENCH_RAY_BLOCKER_DEPTH),
     height: String(ARWES_WORKBENCH_WORLD_HEIGHT),
     material: transparentHitVolumeMaterial("#00ffff"),
     position: `0 0 ${WORKBENCH_RAY_BLOCKER_LAYER_Z}`,
@@ -199,14 +213,15 @@ function WorkbenchRegionHitTarget({
       }
     }
   });
-  const size = worldSizeFromPx(region.w, region.h);
+  const size = regionHitSize(region);
 
-  return createElement("a-plane", {
+  return createElement("a-box", {
     className: "clickable",
     "data-ray-blocking": "true",
     [SPATIAL_UI_HIT_ATTRIBUTE]: "true",
     "data-spatial-target-id": regionTargetId(region.id),
     "data-testid": `arwes-workbench-region-hit-${region.id.toLowerCase()}`,
+    depth: String(WORKBENCH_REGION_HIT_DEPTH),
     height: String(size.height),
     material: transparentHitVolumeMaterial("#ffffff"),
     position: worldPositionFromPx(region.x + region.w / 2, region.y + region.h / 2, WORKBENCH_REGION_HIT_LAYER_Z),

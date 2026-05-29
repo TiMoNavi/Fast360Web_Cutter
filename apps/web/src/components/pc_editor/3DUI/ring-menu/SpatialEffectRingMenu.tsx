@@ -1,6 +1,7 @@
 "use client";
 
 import { createElement, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Vector3 } from "three";
 import {
   SPATIAL_UI_HIT_ATTRIBUTE,
   SPATIAL_UI_TEXT_RENDER_ORDER,
@@ -14,13 +15,29 @@ import type { Spatial3DUiAction, SpatialEffectCategory, SpatialEffectItem } from
 
 type AFrameEntityElement = HTMLElement & {
   object3D?: {
-    getWorldPosition?: (target: { x: number; y: number; z: number }) => void;
-    lookAt?: (target: { x: number; y: number; z: number }) => void;
+    getWorldPosition?: (target: Vector3) => Vector3;
+    lookAt?: (target: Vector3) => void;
     position?: {
       set?: (x: number, y: number, z: number) => void;
     };
+    rotateY?: (radians: number) => void;
     traverse?: (callback: (child: { renderOrder?: number }) => void) => void;
+    updateMatrixWorld?: (force?: boolean) => void;
   };
+};
+
+type AFrameSceneElement = HTMLElement & {
+  object3D?: {
+    updateMatrixWorld?: (force?: boolean) => void;
+  };
+  renderer?: {
+    xr?: {
+      getController?: (index: number) => AFrameEntityElement["object3D"];
+      getControllerGrip?: (index: number) => AFrameEntityElement["object3D"];
+      getReferenceSpace?: () => XRReferenceSpace | null;
+    };
+  };
+  xrSession?: XRSession;
 };
 
 type RingItem = {
@@ -50,7 +67,16 @@ const HOLD_EFFECT_IDS = new Set(["black-fade", "white-fade"]);
 const CATEGORY_DWELL_OPEN_MS = 500;
 const EFFECT_LEVEL_IDLE_COLLAPSE_MS = 1000;
 const RING_MENU_FALLBACK_POSITION = { x: 0.44, y: 1.2, z: -0.86 };
-const RING_MENU_CONTROLLER_Y_OFFSET = 0.08;
+const RING_MENU_FACE_CAMERA_YAW_FLIP_RADIANS = Math.PI * 2;
+const RING_MENU_WORLD_FORWARD_OFFSET = -0.12;
+const RING_MENU_WORLD_UP_OFFSET = 0.1;
+const RING_MENU_ANCHOR_CAPTURE_MAX_FRAMES = 18;
+const RING_MENU_FALLBACK_VECTOR = new Vector3(
+  RING_MENU_FALLBACK_POSITION.x,
+  RING_MENU_FALLBACK_POSITION.y,
+  RING_MENU_FALLBACK_POSITION.z
+);
+const RING_MENU_MIN_CONTROLLER_POSE_LENGTH = 0.001;
 
 function toRadians(degrees: number) {
   return (degrees * Math.PI) / 180;
@@ -114,6 +140,95 @@ function effectHoldDurationMs(effect: SpatialEffectItem, elapsedMs: number) {
   }
 
   return Math.max(160, Math.round(elapsedMs));
+}
+
+function hasUsableControllerPose(position: Vector3) {
+  return position.lengthSq() > RING_MENU_MIN_CONTROLLER_POSE_LENGTH * RING_MENU_MIN_CONTROLLER_POSE_LENGTH;
+}
+
+function readObjectWorldPosition(
+  object3D: AFrameEntityElement["object3D"] | null | undefined,
+  target: Vector3
+) {
+  if (!object3D?.getWorldPosition) {
+    return false;
+  }
+
+  object3D.updateMatrixWorld?.(true);
+  target.set(0, 0, 0);
+  object3D.getWorldPosition(target);
+  return hasUsableControllerPose(target);
+}
+
+function readRightXrFrameAnchor(scene: AFrameSceneElement | null, frame: XRFrame | null | undefined, target: Vector3) {
+  const referenceSpace = scene?.renderer?.xr?.getReferenceSpace?.();
+  const inputSources = scene?.xrSession?.inputSources ?? frame?.session?.inputSources;
+
+  if (!frame?.getPose || !referenceSpace || !inputSources) {
+    return null;
+  }
+
+  for (const inputSource of Array.from(inputSources)) {
+    if (inputSource.handedness !== "right") {
+      continue;
+    }
+
+    const spaces: Array<[string, XRSpace | undefined]> = [
+      ["xr-frame-right-grip", inputSource.gripSpace],
+      ["xr-frame-right-target-ray", inputSource.targetRaySpace]
+    ];
+
+    for (const [source, space] of spaces) {
+      if (!space) {
+        continue;
+      }
+
+      const pose = frame.getPose(space, referenceSpace);
+      const position = pose?.transform?.position;
+
+      if (!position) {
+        continue;
+      }
+
+      target.set(position.x, position.y, position.z);
+      if (hasUsableControllerPose(target)) {
+        return source;
+      }
+    }
+  }
+
+  return null;
+}
+
+function readRightControllerAnchor(scene: AFrameSceneElement | null, target: Vector3, frame?: XRFrame | null) {
+  const xrFrameSource = readRightXrFrameAnchor(scene, frame, target);
+
+  if (xrFrameSource) {
+    return xrFrameSource;
+  }
+
+  const controller = scene?.querySelector("#right-controller") as AFrameEntityElement | null;
+
+  if (readObjectWorldPosition(controller?.object3D, target)) {
+    return "aframe-right-controller";
+  }
+
+  const xr = scene?.renderer?.xr;
+  const candidates: Array<[string, AFrameEntityElement["object3D"] | null | undefined]> = [
+    ["xr-controller-1", xr?.getController?.(1)],
+    ["xr-controller-grip-1", xr?.getControllerGrip?.(1)],
+    ["xr-controller-0", xr?.getController?.(0)],
+    ["xr-controller-grip-0", xr?.getControllerGrip?.(0)]
+  ];
+
+  for (const [source, object3D] of candidates) {
+    if (readObjectWorldPosition(object3D, target)) {
+      return source;
+    }
+  }
+
+  target.copy(RING_MENU_FALLBACK_VECTOR);
+  return "fallback";
 }
 
 function RingMenuRayBlocker() {
@@ -239,37 +354,76 @@ function useControllerAnchoredBillboard(rootRef: RefObject<AFrameEntityElement |
       return undefined;
     }
 
-    let frameId = 0;
-    const cameraPosition = { x: 0, y: 1.6, z: 0 };
-    const controllerPosition = { x: 0, y: 0, z: 0 };
+    let frameId: number | null = null;
+    let scheduledXrSession: XRSession | null = null;
+    let stopped = false;
+    let captureAttemptCount = 0;
+    const cameraPosition = new Vector3(0, 1.6, 0);
+    const controllerPosition = new Vector3();
 
-    const tick = () => {
+    const scheduleNextFrame = () => {
+      const scene = rootRef.current?.closest("a-scene") as AFrameSceneElement | null;
+      const xrSession = scene?.xrSession;
+
+      if (xrSession?.requestAnimationFrame) {
+        scheduledXrSession = xrSession;
+        frameId = xrSession.requestAnimationFrame((_time, frame) => tick(frame));
+        return;
+      }
+
+      scheduledXrSession = null;
+      frameId = window.requestAnimationFrame(() => tick(null));
+    };
+
+    const tick = (frame: XRFrame | null) => {
+      if (stopped) {
+        return;
+      }
+
       const root = rootRef.current;
-      const camera = document.querySelector("#main-camera") as AFrameEntityElement | null;
-      const controller = document.querySelector("#right-controller") as AFrameEntityElement | null;
+      const scene = root?.closest("a-scene") as AFrameSceneElement | null;
+      const camera = scene?.querySelector("#main-camera") as AFrameEntityElement | null;
+      captureAttemptCount += 1;
 
-      controller?.object3D?.getWorldPosition?.(controllerPosition);
+      scene?.object3D?.updateMatrixWorld?.(true);
+      root?.object3D?.updateMatrixWorld?.(true);
+      camera?.object3D?.updateMatrixWorld?.(true);
+
       camera?.object3D?.getWorldPosition?.(cameraPosition);
+      const anchorSource = readRightControllerAnchor(scene, controllerPosition, frame);
+      const hasControllerPose = anchorSource !== "fallback";
+      const anchor = hasControllerPose ? controllerPosition : RING_MENU_FALLBACK_VECTOR;
+      const x = anchor.x;
+      const y = anchor.y + (hasControllerPose ? RING_MENU_WORLD_UP_OFFSET : 0);
+      const z = anchor.z + (hasControllerPose ? RING_MENU_WORLD_FORWARD_OFFSET : 0);
 
-      const hasControllerPose =
-        Boolean(controller?.object3D?.getWorldPosition) &&
-        Math.abs(controllerPosition.x) + Math.abs(controllerPosition.y) + Math.abs(controllerPosition.z) > 0.001;
-      const anchor = hasControllerPose ? controllerPosition : RING_MENU_FALLBACK_POSITION;
-
-      root?.object3D?.position?.set?.(
-        anchor.x,
-        anchor.y + (hasControllerPose ? RING_MENU_CONTROLLER_Y_OFFSET : 0),
-        anchor.z
-      );
+      root?.object3D?.position?.set?.(x, y, z);
+      root?.setAttribute("data-anchor-source", anchorSource);
+      root?.setAttribute("data-anchor-x", x.toFixed(4));
+      root?.setAttribute("data-anchor-y", y.toFixed(4));
+      root?.setAttribute("data-anchor-z", z.toFixed(4));
       root?.object3D?.lookAt?.(cameraPosition);
+      root?.object3D?.rotateY?.(RING_MENU_FACE_CAMERA_YAW_FLIP_RADIANS);
       root?.object3D?.traverse?.((child) => {
         child.renderOrder = SPATIAL_UI_TEXT_RENDER_ORDER;
       });
-      frameId = window.requestAnimationFrame(tick);
+      if (hasControllerPose || captureAttemptCount >= RING_MENU_ANCHOR_CAPTURE_MAX_FRAMES) {
+        stopped = true;
+        root?.setAttribute("data-anchor-captured", hasControllerPose ? "true" : "fallback");
+        return;
+      }
+
+      scheduleNextFrame();
     };
 
-    frameId = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(frameId);
+    scheduleNextFrame();
+    return () => {
+      stopped = true;
+      if (frameId !== null) {
+        scheduledXrSession?.cancelAnimationFrame?.(frameId);
+        window.cancelAnimationFrame(frameId);
+      }
+    };
   }, [enabled, rootRef]);
 }
 
@@ -491,8 +645,10 @@ export function SpatialEffectRingMenu({
     "a-entity",
     {
       ref: rootRef,
+      "data-anchor-hand": "right",
+      "data-anchor-mode": "controller-world-position",
       "data-testid": "spatial-effect-ring-menu",
-      position: "0.44 1.2 -0.86"
+      position: `${RING_MENU_FALLBACK_POSITION.x} ${RING_MENU_FALLBACK_POSITION.y} ${RING_MENU_FALLBACK_POSITION.z}`
     },
     createElement(RingMenuRayBlocker),
     createElement("a-circle", {

@@ -29,7 +29,7 @@ import {
 } from "./centerFollowKey";
 import { isInteractiveTarget } from "./domTargetGuards";
 import type { PcEdgePanControls } from "./usePcEdgePan";
-import { getPcEditorFrontendPlaybackRate, setPcEditorPointerState } from "../../state";
+import { getPcEditorFrontendPlaybackRate, setPcEditorPointerState, type PcEditorPointerRuntimeState } from "../../state";
 import { PC_MASK_BACKGROUND_HIT_ATTRIBUTE } from "../webxr/AFrameMaskBackgroundTarget";
 import { SPATIAL_UI_HIT_ATTRIBUTE, SPATIAL_UI_RAY_ACTIVE_ATTRIBUTE } from "../../3DUI/shared/SpatialUiInteraction";
 
@@ -131,6 +131,35 @@ function stopNativeInput(event: ReactMouseEvent<HTMLElement> | ReactPointerEvent
   event.nativeEvent.stopImmediatePropagation?.();
 }
 
+function trySetPointerCapture(element: HTMLElement, pointerId: number) {
+  if (!element.isConnected) {
+    return false;
+  }
+
+  try {
+    if (!element.hasPointerCapture(pointerId)) {
+      element.setPointerCapture(pointerId);
+    }
+    return element.hasPointerCapture(pointerId);
+  } catch {
+    return false;
+  }
+}
+
+function tryReleasePointerCapture(element: HTMLElement | null | undefined, pointerId: number) {
+  if (!element?.isConnected) {
+    return;
+  }
+
+  try {
+    if (element.hasPointerCapture(pointerId)) {
+      element.releasePointerCapture(pointerId);
+    }
+  } catch {
+    // The browser may have already retired this pointer after a lost capture, blur, or seek stall.
+  }
+}
+
 function isEditableKeyboardTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -203,8 +232,38 @@ export function usePcMaskPointerInput({
     startY: number;
     dragging: boolean;
   } | null>(null);
+  const publishedPointerStateRef = useRef<Omit<PcEditorPointerRuntimeState, "updatedAt">>({
+    draggingMask: false,
+    primaryDown: false
+  });
 
   const isCenterFollowRequested = () => isPcMaskCenterFollowKeyPressed();
+
+  const publishPointerState = (
+    pointer: Partial<Omit<PcEditorPointerRuntimeState, "updatedAt">>,
+    options: { includeScreenOnly?: boolean } = {}
+  ) => {
+    const previous = publishedPointerStateRef.current;
+    const next = {
+      ...previous,
+      ...pointer
+    };
+    const activityChanged = previous.draggingMask !== next.draggingMask || previous.primaryDown !== next.primaryDown;
+    const screenChanged = Boolean(
+      pointer.lastScreen &&
+        (!previous.lastScreen ||
+          previous.lastScreen.x !== pointer.lastScreen.x ||
+          previous.lastScreen.y !== pointer.lastScreen.y)
+    );
+
+    publishedPointerStateRef.current = next;
+
+    if (!activityChanged && (!options.includeScreenOnly || !screenChanged)) {
+      return;
+    }
+
+    setPcEditorPointerState(pointer);
+  };
 
   const viewCenterFromPointer = (x: number, y: number) => {
     const stage = sceneRef.current?.parentElement ?? document.documentElement;
@@ -449,9 +508,7 @@ export function usePcMaskPointerInput({
 
   const startCenterFollow = (event: ReactPointerEvent<HTMLElement>) => {
     stopNativeInput(event);
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }
+    trySetPointerCapture(event.currentTarget, event.pointerId);
     requestCenterFollowPointerLock(event.currentTarget);
 
     centerFollowClickBlockUntilRef.current = performance.now() + 350;
@@ -474,14 +531,14 @@ export function usePcMaskPointerInput({
       dragging: true
     };
     maskDragPointerRef.current = { x: event.clientX, y: event.clientY };
-    setPcEditorPointerState({
+    publishPointerState({
       draggingMask: true,
       lastScreen: {
         x: event.clientX,
         y: event.clientY
       },
       primaryDown: true
-    });
+    }, { includeScreenOnly: true });
     setMaskDragging(true);
     mask.trackMaskToCenter(cameraCenter, CENTER_FOLLOW_RESPONSE_MS);
     ensureCenterFollow();
@@ -498,9 +555,7 @@ export function usePcMaskPointerInput({
 
     const captureElement = capture?.element ?? centerFollowLookRef.current.stageElement;
     const pointerId = capture?.pointerId ?? active.id;
-    if (captureElement?.hasPointerCapture(pointerId)) {
-      captureElement.releasePointerCapture(pointerId);
-    }
+    tryReleasePointerCapture(captureElement, pointerId);
 
     stagePointerRef.current = null;
     maskDragPointerRef.current = null;
@@ -514,11 +569,11 @@ export function usePcMaskPointerInput({
     edgePan.stopEdgePan();
     setMaskDragging(false);
     setCameraCenter(viewCenterFromCameraState(), { commit: true, phase: "end" });
-    setPcEditorPointerState({
+    publishPointerState({
       draggingMask: false,
       ...(screen ? { lastScreen: screen } : {}),
       primaryDown: false
-    });
+    }, { includeScreenOnly: Boolean(screen) });
     return true;
   };
 
@@ -570,8 +625,8 @@ export function usePcMaskPointerInput({
   };
 
   const stopMaskPointerDrag = (event?: ReactPointerEvent<HTMLDivElement>) => {
-    if (event && event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event) {
+      tryReleasePointerCapture(event.currentTarget, event.pointerId);
     }
     maskDragPointerRef.current = null;
     stagePointerRef.current = null;
@@ -585,7 +640,7 @@ export function usePcMaskPointerInput({
     mask.stopMotion();
     edgePan.stopEdgePan();
     setMaskDragging(false);
-    setPcEditorPointerState({
+    publishPointerState({
       draggingMask: false,
       primaryDown: false
     });
@@ -713,7 +768,7 @@ export function usePcMaskPointerInput({
 
       if (event.shiftKey) {
         event.preventDefault();
-        event.currentTarget.setPointerCapture(event.pointerId);
+        trySetPointerCapture(event.currentTarget, event.pointerId);
         mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 1000 / getPcEditorFrontendPlaybackRate());
         return;
       }
@@ -725,7 +780,7 @@ export function usePcMaskPointerInput({
       }
 
       event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
+      trySetPointerCapture(event.currentTarget, event.pointerId);
 
       stagePointerRef.current = {
         id: event.pointerId,
@@ -737,14 +792,14 @@ export function usePcMaskPointerInput({
         dragging: false
       };
       maskDragPointerRef.current = { x: event.clientX, y: event.clientY };
-      setPcEditorPointerState({
+      publishPointerState({
         draggingMask: stagePointerRef.current.mode !== "click-or-view",
         lastScreen: {
           x: event.clientX,
           y: event.clientY
         },
         primaryDown: true
-      });
+      }, { includeScreenOnly: true });
       if (stagePointerRef.current.mode === "mask-drag") {
         setMaskDragging(true);
       }
@@ -767,7 +822,7 @@ export function usePcMaskPointerInput({
         active.lastX = event.clientX;
         active.lastY = event.clientY;
         active.dragging = true;
-        setPcEditorPointerState({
+        publishPointerState({
           draggingMask: true,
           lastScreen: {
             x: event.clientX,
@@ -787,7 +842,7 @@ export function usePcMaskPointerInput({
         const travel = Math.hypot(event.clientX - active.startX, event.clientY - active.startY);
         active.lastX = event.clientX;
         active.lastY = event.clientY;
-        setPcEditorPointerState({
+        publishPointerState({
           draggingMask: false,
           lastScreen: {
             x: event.clientX,
@@ -824,7 +879,7 @@ export function usePcMaskPointerInput({
       const deltaX = event.clientX - maskDragPointerRef.current.x;
       const deltaY = event.clientY - maskDragPointerRef.current.y;
       maskDragPointerRef.current = { x: event.clientX, y: event.clientY };
-      setPcEditorPointerState({
+      publishPointerState({
         draggingMask: true,
         lastScreen: {
           x: event.clientX,
@@ -881,9 +936,7 @@ export function usePcMaskPointerInput({
       }
 
       stagePointerRef.current = null;
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
+      tryReleasePointerCapture(event.currentTarget, event.pointerId);
 
       if (active.mode === "mask-drag") {
         if (!active.dragging && !isInteractiveTarget(event.target) && isVideoStageTarget(event.target)) {
@@ -895,14 +948,14 @@ export function usePcMaskPointerInput({
         mask.stopMotion();
         edgePan.stopEdgePan();
         setMaskDragging(false);
-        setPcEditorPointerState({
+        publishPointerState({
           draggingMask: false,
           lastScreen: {
             x: event.clientX,
             y: event.clientY
           },
           primaryDown: false
-        });
+        }, { includeScreenOnly: true });
         return;
       }
 
@@ -920,14 +973,14 @@ export function usePcMaskPointerInput({
         if (active.dragging) {
           setCameraCenter(cameraLookRef.current ?? { pitch: 0, yaw: 0 }, { commit: true, phase: "end" });
         }
-        setPcEditorPointerState({
+        publishPointerState({
           draggingMask: false,
           lastScreen: {
             x: event.clientX,
             y: event.clientY
           },
           primaryDown: false
-        });
+        }, { includeScreenOnly: true });
         return;
       }
 
@@ -935,14 +988,14 @@ export function usePcMaskPointerInput({
       maskDragPointerRef.current = null;
       edgePan.stopEdgePan();
       setMaskDragging(false);
-      setPcEditorPointerState({
+      publishPointerState({
         draggingMask: false,
         lastScreen: {
           x: event.clientX,
           y: event.clientY
         },
         primaryDown: false
-      });
+      }, { includeScreenOnly: true });
       mask.moveMaskTo(viewCenterFromPointer(event.clientX, event.clientY), 520 / getPcEditorFrontendPlaybackRate());
     },
     stopMaskPointerDrag

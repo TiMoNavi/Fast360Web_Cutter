@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, createElement, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 
 export type PcEditorPressedKeyState = {
   code: string;
@@ -376,6 +376,37 @@ function cropMaskToViewTarget(
   };
 }
 
+function areCentersEqual(a: PcEditorViewCenter, b: PcEditorViewCenter) {
+  return Math.abs(a.pitch - b.pitch) < 0.0005 && Math.abs(a.yaw - b.yaw) < 0.0005;
+}
+
+function areScreenPointsEqual(a: PcEditorPointerRuntimeState["lastScreen"], b: PcEditorPointerRuntimeState["lastScreen"]) {
+  if (!a || !b) {
+    return a === b;
+  }
+
+  return a.x === b.x && a.y === b.y;
+}
+
+function isSameCameraPose(
+  previous: PcEditorCameraPoseRuntimeState | null,
+  next: Omit<PcEditorCameraPoseRuntimeState, "updatedAt"> | null
+) {
+  if (!previous || !next) {
+    return previous === next;
+  }
+
+  return previous.source === next.source && areCentersEqual(previous.center, next.center);
+}
+
+function isSamePointerState(previous: PcEditorPointerRuntimeState, next: Omit<PcEditorPointerRuntimeState, "updatedAt">) {
+  return (
+    previous.draggingMask === next.draggingMask &&
+    previous.primaryDown === next.primaryDown &&
+    areScreenPointsEqual(previous.lastScreen, next.lastScreen)
+  );
+}
+
 export function createPcEditorRuntimeStateStore(initialState: PcEditorRuntimeState = EMPTY_STATE): PcEditorRuntimeStateStore {
   let state = initialState;
   const listeners = new Set<() => void>();
@@ -395,6 +426,10 @@ export function createPcEditorRuntimeStateStore(initialState: PcEditorRuntimeSta
       emitChange();
     },
     setCameraPose(cameraPose) {
+      if (isSameCameraPose(state.cameraPose, cameraPose)) {
+        return;
+      }
+
       state = {
         ...state,
         cameraPose: cameraPose
@@ -548,13 +583,21 @@ export function createPcEditorRuntimeStateStore(initialState: PcEditorRuntimeSta
       emitChange();
     },
     setPointerState(pointer) {
+      const nextPointer = {
+        ...state.input.pointer,
+        ...pointer
+      };
+
+      if (isSamePointerState(state.input.pointer, nextPointer)) {
+        return;
+      }
+
       state = {
         ...state,
         input: {
           ...state.input,
           pointer: {
-            ...state.input.pointer,
-            ...pointer,
+            ...nextPointer,
             updatedAt: Date.now()
           }
         }
@@ -788,7 +831,45 @@ export function usePcEditorRuntimeState() {
 export function usePcEditorRuntimeStateSelector<TSelected>(
   selector: (state: PcEditorRuntimeState) => TSelected
 ) {
-  return selector(usePcEditorRuntimeState());
+  const store = usePcEditorRuntimeStateStore();
+  const selectorRef = useRef(selector);
+  const selectedRef = useRef<TSelected | undefined>(undefined);
+  const hasSelectedRef = useRef(false);
+
+  selectorRef.current = selector;
+
+  const getSelectedSnapshot = useCallback(() => {
+    const selected = selectorRef.current(store.getSnapshot());
+
+    if (!hasSelectedRef.current || !Object.is(selectedRef.current, selected)) {
+      selectedRef.current = selected;
+      hasSelectedRef.current = true;
+    }
+
+    return selectedRef.current as TSelected;
+  }, [store]);
+
+  const subscribeSelected = useCallback(
+    (onStoreChange: () => void) =>
+      store.subscribe(() => {
+        const selected = selectorRef.current(store.getSnapshot());
+
+        if (hasSelectedRef.current && Object.is(selectedRef.current, selected)) {
+          return;
+        }
+
+        selectedRef.current = selected;
+        hasSelectedRef.current = true;
+        onStoreChange();
+      }),
+    [store]
+  );
+
+  return useSyncExternalStore(
+    subscribeSelected,
+    getSelectedSnapshot,
+    getSelectedSnapshot
+  );
 }
 
 export function usePcEditorMaskViewportBounds() {
