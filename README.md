@@ -128,6 +128,18 @@ storage/sample-videos/public-360/videojs-shark-mono-960x480-8s.mp4
 The larger local 4K samples are ignored. Source and license notes for public
 clips live in `storage/sample-videos/public-360/SOURCES.md`.
 
+Fresh local deployments also create a demo account on API startup:
+
+```text
+Email: demo@example.local
+Password: demo123456
+```
+
+That account, and every newly registered account, is seeded with available demo
+clips from `storage/sample-videos/public-360`. The committed compact clips are
+always available after cloning. Local 4K clips are used automatically when the
+files exist, but they are not required for first-run testing.
+
 ## Main Routes
 
 ```text
@@ -172,9 +184,10 @@ npm run check:api        # Python compile check
 1. Start `npm run dev:api`.
 2. Start `npm run dev:web`.
 3. Open `http://localhost:3000/mobile/login`.
-4. Register a local account.
-5. Upload one of the committed sample videos from `storage/sample-videos`.
-6. Open the video detail page, create/open a cut session, edit the view path,
+4. Log in with `demo@example.local / demo123456`, or register a local account.
+5. Open `http://localhost:3000/mobile/videos`; the demo videos should already
+   be in the library.
+6. Open a video detail page, create/open a cut session, edit the view path,
    and run the render-test/export flow.
 7. Download the generated MP4 from the mobile export page.
 

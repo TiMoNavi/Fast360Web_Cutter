@@ -138,7 +138,67 @@ RENDER_TEST_MAX_FOV_RATE_DEGREES_PER_SECOND = 360
 RECORDING_MIN_DURATION_MS = read_int_env("RECORDING_MIN_DURATION_MS", 1000)
 RECORDING_MAX_DURATION_MS = read_int_env("RECORDING_MAX_DURATION_MS", 10 * 60_000)
 DEMO_VIDEO_DIR = SAMPLE_VIDEOS_DIR / "public-360"
+DEMO_ACCOUNT_EMAIL = os.getenv("DEMO_ACCOUNT_EMAIL", "demo@example.local")
+DEMO_ACCOUNT_PASSWORD = os.getenv("DEMO_ACCOUNT_PASSWORD", "demo123456")
+DEMO_ACCOUNT_ENABLED = os.getenv("DEMO_ACCOUNT_ENABLED", "1").lower() not in {"0", "false", "no"}
 DEMO_VIDEO_CATALOG = [
+    {
+        "id": "relaxatron-compact",
+        "title": "Relaxatron 360 Warmup",
+        "subtitle": "Bundled 960x480 360 sample for instant onboarding.",
+        "description": "A tiny committed equirectangular clip that lets a fresh clone enter the editor without uploading media.",
+        "tags": ["bundled", "compact", "8s"],
+        "difficulty": "beginner",
+        "sourceFilename": "elevr-relaxatron-mono-960x480-8s.mp4",
+        "projection": "equirectangular",
+        "layout": "mono-2:1",
+        "durationHintMs": 8000,
+        "resolutionLabel": "960 x 480",
+        "attribution": "eleVR Web Player demo video, MPL-2.0.",
+        "tutorialSteps": [
+            {"title": "Start immediately", "body": "Use the bundled clip without downloading any extra assets."},
+            {"title": "Record a view path", "body": "Move the framing window and collect a short camera path."},
+            {"title": "Try an export", "body": "Run a smoke render against a tiny source file."},
+        ],
+    },
+    {
+        "id": "valiant-overpass-compact",
+        "title": "Valiant Overpass Compact",
+        "subtitle": "Tiny 360 city overpass sample.",
+        "description": "A short committed 360 clip for validating playback, masking, and WebXR entry on a fresh deploy.",
+        "tags": ["bundled", "compact", "4s"],
+        "difficulty": "beginner",
+        "sourceFilename": "valiant-overpass-mono-960x480-4s.mp4",
+        "projection": "equirectangular",
+        "layout": "mono-2:1",
+        "durationHintMs": 4000,
+        "resolutionLabel": "960 x 480",
+        "attribution": "Valiant360 demo clip, MIT.",
+        "tutorialSteps": [
+            {"title": "Open the demo", "body": "Claim the sample into your account from the public video library."},
+            {"title": "Check framing", "body": "Use the crop mask and view controls on a lightweight source."},
+            {"title": "Share the setup", "body": "This clip is committed so every clone has the same baseline media."},
+        ],
+    },
+    {
+        "id": "shark-compact",
+        "title": "Shark 360 Compact",
+        "subtitle": "Small 360 action sample for quick interaction tests.",
+        "description": "A compact shark scene that is useful for checking motion, effects, and controller interactions.",
+        "tags": ["bundled", "compact", "8s"],
+        "difficulty": "practice",
+        "sourceFilename": "videojs-shark-mono-960x480-8s.mp4",
+        "projection": "equirectangular",
+        "layout": "mono-2:1",
+        "durationHintMs": 8000,
+        "resolutionLabel": "960 x 480",
+        "attribution": "videojs-panorama demo asset, Apache-2.0.",
+        "tutorialSteps": [
+            {"title": "Follow motion", "body": "Track a moving subject with the same workflow as a larger 4K clip."},
+            {"title": "Trigger effects", "body": "Use keyboard or VR shortcuts to test timing-sensitive effects."},
+            {"title": "Keep clones light", "body": "The source is tiny enough to keep in Git."},
+        ],
+    },
     {
         "id": "norah-head-walk",
         "title": "Norah Head Rock Walk",
@@ -202,6 +262,7 @@ DEMO_VIDEO_CATALOG = [
 @app.on_event("startup")
 def startup() -> None:
     init_storage()
+    ensure_demo_account()
 
 
 @app.get("/health")
@@ -248,18 +309,35 @@ def seed_default_videos_for_user(conn: sqlite3.Connection, user_id: str) -> None
         source_path = DEMO_VIDEO_DIR / item["sourceFilename"]
         if not source_path.is_file():
             continue
+        existing = conn.execute(
+            "SELECT id FROM videos WHERE user_id = ? AND original_filename = ?",
+            (user_id, item["sourceFilename"]),
+        ).fetchone()
+        if existing is not None:
+            continue
+
         video_id = new_id("video")
         stored_filename = f"{video_id}{source_path.suffix}"
         target_path = VIDEOS_DIR / stored_filename
         shutil.copy2(source_path, target_path)
         metadata = probe_video_metadata(target_path)
+        metadata_json = {
+            **metadata,
+            "isDemo": True,
+            "demoId": item["id"],
+            "demoAttribution": item["attribution"],
+            "projection": item["projection"],
+            "layout": item["layout"],
+        }
+        thumbnail_filename = generate_video_thumbnail(target_path, video_id, metadata.get("durationMs"))
         conn.execute(
             """
             INSERT INTO videos (
                 id, user_id, original_filename, stored_filename, content_type,
-                file_size, duration_ms, width, height, fps, metadata_json, status, created_at, updated_at
+                thumbnail_filename, file_size, duration_ms, width, height, fps,
+                metadata_json, status, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 video_id,
@@ -267,17 +345,45 @@ def seed_default_videos_for_user(conn: sqlite3.Connection, user_id: str) -> None
                 item["sourceFilename"],
                 stored_filename,
                 "video/mp4",
+                thumbnail_filename,
                 target_path.stat().st_size,
-                metadata["durationMs"],
+                metadata["durationMs"] or item["durationHintMs"],
                 metadata["width"],
                 metadata["height"],
                 metadata["fps"],
-                json.dumps(metadata),
-                "ready",
+                json.dumps(metadata_json),
+                "ready_for_xr",
                 now,
                 now,
             ),
         )
+
+
+def ensure_demo_account() -> None:
+    if not DEMO_ACCOUNT_ENABLED:
+        return
+
+    email = normalize_email(DEMO_ACCOUNT_EMAIL)
+    if "@" not in email or len(DEMO_ACCOUNT_PASSWORD) < 6:
+        return
+
+    with connect() as conn:
+        row = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        if row is None:
+            user_id = "user_demo_account"
+            salt = secrets.token_hex(16)
+            password_hash = hash_password(DEMO_ACCOUNT_PASSWORD, salt)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO users (id, email, password_hash, password_salt, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, email, password_hash, salt, utc_now()),
+            )
+            row = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+
+        if row is not None:
+            seed_default_videos_for_user(conn, row["id"])
 
 
 def cleanup_expired_sessions(conn, now: str | None = None) -> None:
@@ -658,7 +764,15 @@ def resolve_active_webxr_player_session(conn: sqlite3.Connection, user_id: str) 
 
 @app.get("/api/demo-videos")
 def list_demo_videos() -> dict[str, list[dict]]:
-    return {"videos": [demo_video_response(item) for item in DEMO_VIDEO_CATALOG]}
+    videos = []
+    for item in DEMO_VIDEO_CATALOG:
+        try:
+            videos.append(demo_video_response(item))
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                continue
+            raise
+    return {"videos": videos}
 
 
 @app.get("/api/demo-videos/{sample_id}/stream")

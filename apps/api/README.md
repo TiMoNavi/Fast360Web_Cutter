@@ -60,6 +60,18 @@ The MVP stores data in `storage/app.db`, uploaded videos in `storage/videos`, up
 
 All video, session, and export endpoints require the `tid_session` cookie created by the auth endpoints.
 
+On startup, the API creates a local demo account unless `DEMO_ACCOUNT_ENABLED=0`:
+
+```text
+Email: demo@example.local
+Password: demo123456
+```
+
+Override these with `DEMO_ACCOUNT_EMAIL` and `DEMO_ACCOUNT_PASSWORD`. The demo
+account and newly registered accounts are seeded with demo clips from
+`storage/sample-videos/public-360`. Compact committed clips guarantee a fresh
+clone has playable media; local 4K clips are optional and skipped when absent.
+
 `/api/xr/player-session` is the state endpoint behind `/xr/player`. `GET` restores the current user's active WebXR cut session, falling back to the most recent valid session or creating one for an available 360 video. `PUT` accepts `{ "videoId": "..." }`, switches the active player state to that video's latest non-abandoned session, or creates a new session for that video.
 
 Uploads use `UploadFile` today. Video import rules live in `app.video_ingest` and are numbered for extension. `.mp4` and `.m4v` are used directly when browser-compatible; `.mov`, `.webm`, `.mkv`, and non-browser-ready MP4 files are normalized into an H.264/AAC MP4 proxy while the original is kept under `storage/videos/originals`. Known camera raw suffixes such as `.insv` and `.360` return explicit conversion guidance instead of pretending to be supported. The default upload limit is 2GB and can be changed with `VIDEO_UPLOAD_MAX_BYTES`.
